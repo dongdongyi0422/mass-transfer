@@ -307,24 +307,38 @@ with colB:
     st.subheader("Permeance (SI)")
     fig1, ax1 = plt.subplots(figsize=(9,3))
 
-    GPU = 3.35e-10  # 환산계수
+    # --- Permeance (SI) + Legend in GPU ---
+    st.subheader("Permeance (SI)")
+    fig1, ax1 = plt.subplots(figsize=(9, 3))
 
-    ax1.plot(relP, Pi1, label=f"{gas1} (~{Pi1.max()/GPU:,.0f} GPU)")
-    ax1.plot(relP, Pi2, '--', label=f"{gas2} (~{Pi2.max()/GPU:,.0f} GPU)")
+    GPU = 3.35e-10  # 1 GPU = 3.35×10^-10 mol m^-2 s^-1 Pa^-1
+
+    # 범례에는 GPU 수치 표시 (최대값 기준)
+    gpu1 = Pi1.max() / GPU
+    gpu2 = Pi2.max() / GPU
+
+    ax1.plot(relP, Pi1, label=f"{gas1} ({gpu1:,.0f})")
+    ax1.plot(relP, Pi2, '--', label=f"{gas2} ({gpu2:,.0f})")
 
     ax1.set_ylabel(r"$\Pi$  (mol m$^{-2}$ s$^{-1}$ Pa$^{-1}$)")
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-    ax1.grid(True); ax1.legend()
-    st.pyplot(fig1, use_container_width=True); plt.close(fig1)
+    ax1.grid(True)
+    
+    # 범례 제목을 Permeance (GPU)로
+    leg1 = ax1.legend(title="Permeance (GPU)")
+    st.pyplot(fig1, use_container_width=True)
+    plt.close(fig1)
 
-
+    # --- Selectivity (그대로) ---
     st.subheader("Selectivity")
-    fig2, ax2 = plt.subplots(figsize=(9,3))
+    fig2, ax2 = plt.subplots(figsize=(9, 3))
     ax2.plot(relP, Sel, label=f"{gas1}/{gas2}")
     ax2.set_ylabel("Selectivity (–)")
     ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax2.grid(True); ax2.legend()
-    st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+    st.pyplot(fig2, use_container_width=True)
+    plt.close(fig2)
+
 
 with colA:
     st.subheader("Mechanism (rule) vs intrinsic (Gas1)")
