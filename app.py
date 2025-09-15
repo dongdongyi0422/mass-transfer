@@ -1,6 +1,7 @@
 # app.py
 # Streamlit web app: Permeance in SI (mol m^-2 s^-1 Pa^-1), Selectivity, Mechanism band
-# + "슬라이더 + 숫자입력 + −/+ 버튼" 동기화 (widget key에 직접 대입 금지)
+# + "슬라이더 + 숫자입력 + − / ＋ 버튼" 동기화 (widget key에 직접 대입 금지)
+# + 숫자 입력칸 확대, - / + 사이 간격(spacer) 추가, ＋ 표시 확실히 보이게 처리
 
 import numpy as np
 import matplotlib
@@ -37,33 +38,51 @@ PARAMS = {
     "C3H8":{"M":44.097e-3, "d":4.30, "Ea_s":1.05e4},
 }
 
-# ---------------------------- UI helper: slider + number + −/+ ----------------------------
-def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit=""):
+# ---------------------------- UI helper: slider + number + − / ＋ ----------------------------
+def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", big_step_mult=10):
     """
     Composite widget:
-      [ Slider ][ NumberInput ][ - ][ + ]
-    - 위젯 키는 건드리지 않고, st.session_state[key] 하나만 '캐논' 값으로 유지
-    - 모든 위젯의 value=... 에 이 캐논값을 전달
+      [ Slider ][ NumberInput ][ (spacer) ][ − ][ ＋ ]
+    - st.session_state[key] 하나만 '캐논' 값으로 유지
+    - view 위젯은 *_view 키로만 사용 (직접 대입 금지)
+    - 숫자 입력칸을 넓히고, -/＋ 버튼 사이에 간격(spacer) 추가
+    - '＋'는 전각(풀와이드) 기호로 표기가 깨지지 않게 함
     """
-    # 캐논값 초기화
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
 
-    c1, c2, c3, c4 = st.columns([0.65, 0.20, 0.075, 0.075])
+    # 레이아웃: 슬라이더(넓게) / 숫자입력(넓게) / 스페이서 / - / ＋
+    # 필요하면 비율을 더 키워 숫자 입력칸을 더 넓힐 수 있음
+    c1, c2, csp, c3, c4 = st.columns([0.50, 0.38, 0.06, 0.03, 0.03])
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
 
-    # 현재 캐논값
     cur = float(st.session_state[key])
 
-    # 위젯 그리기 (value=cur 로 주입)
-    sld_val = c1.slider(lab, min_value=float(vmin), max_value=float(vmax),
-                        value=cur, step=float(vstep), key=f"{key}_sld_view")
-    num_val = c2.number_input("", min_value=float(vmin), max_value=float(vmax),
-                              value=cur, step=float(vstep),
-                              format="%.6f", key=f"{key}_num_view")
+    sld_val = c1.slider(
+        lab,
+        min_value=float(vmin),
+        max_value=float(vmax),
+        value=float(cur),
+        step=float(vstep),
+        key=f"{key}_sld_view",
+    )
+    num_val = c2.number_input(
+        "",
+        min_value=float(vmin),
+        max_value=float(vmax),
+        value=float(cur),
+        step=float(vstep),
+        format="%.6f",
+        key=f"{key}_num_view",
+    )
 
-    minus = c3.button("−", key=f"{key}_minus")
-    plus  = c4.button("+", key=f"{key}_plus")
+    # spacer 컬럼(csp)은 아무 것도 그리지 않아 간격만 만든다
+    with csp:
+        st.write("")
+
+    # 버튼: 전각 '－', '＋' 사용해 아이콘이 잘려 보이지 않도록
+    minus = c3.button("－", key=f"{key}_minus", help=f"-{vstep:g}")
+    plus  = c4.button("＋", key=f"{key}_plus",  help=f"+{vstep:g}")
 
     # 변경 우선순위: 버튼 > 숫자입력 > 슬라이더
     new_val = cur
@@ -77,7 +96,6 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit=""):
         new_val = float(sld_val)
 
     new_val = float(np.clip(new_val, vmin, vmax))
-    # 캐논 값만 업데이트 (위젯 키는 건드리지 않음)
     if new_val != cur:
         st.session_state[key] = new_val
 
