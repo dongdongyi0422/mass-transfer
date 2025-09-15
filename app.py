@@ -1,31 +1,87 @@
-# app.py — Softmax-competition version (fixes "always Blocked" & odd plots)
+# app.py
+# Streamlit web app: Permeance (SI units), Selectivity, Mechanism band
+# Mechanisms: Blocked / Sieving / Knudsen / Surface / Capillary / Solution
+# Adsorption: Double-Site Langmuir (DSL) with Qst (kJ/mol) & q (mmol/g)
+# Author: you + ChatGPT
+
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import to_rgba
 import streamlit as st
+from matplotlib.colors import to_rgba
 
+# ---------------------------- Physical constants ----------------------------
 R = 8.314  # J/mol/K
-EPS = 1e-30
-KELVIN_A = 38.0  # Kelvin-like onset 강도(좁은 기공/낮은 T에서 onset 낮아짐)
 
-# (M, kinetic diameter [Å])
-GASES = {
-    "H2":  (2.016, 2.89),
-    "D2":  (4.028, 2.89),
-    "He":  (4.003, 2.60),
-    "N2":  (28.0134, 3.64),
-    "O2":  (31.998, 3.46),
-    "CO2": (44.01, 3.30),
-    "CH4": (16.043, 3.80),
-    "C2H6":(30.070, 4.44),
-    "C3H6":(42.081, 4.68),
-    "C3H8":(44.097, 4.65),
+# ---------------------------- Model global knobs ----------------------------
+# Effective solid density to convert [mol/kg] -> [mol/m^3] (surface/solution terms)
+RHO_EFF = 500.0  # kg/m^3  (tunable; represents accessible sorbent per unit membrane volume)
+# Surface diffusion prefactor
+D0_SURF = 1e-9   # m^2/s   (typical order for surface hopping)
+# Solution diffusion prefactor
+D0_SOL  = 1e-10  # m^2/s   (dense polymer-like)
+E_D_SOL = 1.8e4  # J/mol   (solution diffusion activation)
+# Capillary permeance scale (empirical SI proxy): Pi_cap ~ K_cap * sqrt(r[m]) / L
+K_CAP   = 1e-7   # (mol m^-1.5 s^-1 Pa^-1)  tuned for visualization in SI scale
+# Sieving barrier (Arrhenius-like) when pore ~ molecule
+E_SIEVE = 9.0e3  # J/mol
+# Tiny permeance used for "Blocked" instead of perfect zero (more physical)
+PI_TINY = 1e-14  # mol m^-2 s^-1 Pa^-1
+# When pore is truly nanodense (very small), favor solution-diffusion
+SOL_TH_NM = 0.30  # nm: below this, treat as dense/solution-diffusion dominated
+
+# ---------------------------- Gas parameters ----------------------------
+# M [kg/mol], kinetic diameter d [Å], surface Ea_s for Ds Arrhenius [J/mol]
+PARAMS = {
+    "H2":  {"M":2.016e-3,  "d":2.89, "Ea_s":8.0e3},
+    "D2":  {"M":4.028e-3,  "d":2.89, "Ea_s":8.5e3},
+    "He":  {"M":4.003e-3,  "d":2.60, "Ea_s":6.0e3},
+    "N2":  {"M":28.0134e-3,"d":3.64, "Ea_s":9.0e3},
+    "O2":  {"M":31.998e-3, "d":3.46, "Ea_s":9.0e3},
+    "CO2": {"M":44.01e-3,  "d":3.30, "Ea_s":9.5e3},
+    "CH4": {"M":16.043e-3, "d":3.80, "Ea_s":9.5e3},
+    "C2H6":{"M":30.070e-3, "d":4.44, "Ea_s":1.0e4},
+    "C3H6":{"M":42.081e-3, "d":4.00, "Ea_s":1.05e4},
+    "C3H8":{"M":44.097e-3, "d":4.30, "Ea_s":1.05e4},
 }
 
-MECHS = ["Blocked", "Sieving", "Knudsen", "Surface", "Capillary", "Solution"]
-MCOLOR = {
+# ---------------------------- DSL adsorption ----------------------------
+def dsl_loading_and_slope(gas, T, P_bar, relP_vec, q1_mmolg, q2_mmolg, Qst1_kJ, Qst2_kJ):
+    """
+    Returns:
+      q_vec   [mmol/g]
+      dqdp    [mol/kg/Pa]  (slope wrt pressure)
+    """
+    par = PARAMS[gas]
+    P0 = P_bar * 1e5  # Pa
+    # DSL affinity coefficients (b) with Qst; b0 chosen as 1e-4 Pa^-1 baseline
+    b0 = 1e-4
+    b1 = b0 * np.exp(max(Qst1_kJ,0.0)*1e3/(R*T))
+    b2 = b0 * np.exp(max(Qst2_kJ,0.0)*1e3/(R*T))
+
+    q_vec  = np.zeros_like(relP_vec, float)
+    dqdp_MK = np.zeros_like(relP_vec, float)  # mol/kg/Pa
+
+    # Convert capacity from mmol/g -> mol/kg
+    q1_molkg = q1_mmolg * 1e-3 * 1e3
+    q2_molkg = q2_mmolg * 1e-3 * 1e3
+
+    for i, rp in enumerate(relP_vec):
+        P = max(rp, 1e-9) * P0
+        th1 = (b1*P)/(1.0 + b1*P)
+        th2 = (b2*P)/(1.0 + b2*P)
+        q_molkg = q1_molkg*th1 + q2_molkg*th2
+        q_vec[i] = q_molkg / 1e3  # -> mmol/g
+
+        # derivative wrt P: dq/dP = q1*b1/(1+b1P)^2 + q2*b2/(1+b2P)^2  (mol/kg/Pa)
+        dqdp_MK[i] = (q1_molkg * b1)/(1.0 + b1*P)**2 + (q2_molkg * b2)/(1.0 + b2*P)**2
+
+    return q_vec, dqdp_MK
+
+# ---------------------------- Mechanisms & permeance (SI) ----------------------------
+MECH_ORDER = ["Blocked", "Sieving", "Knudsen", "Surface", "Capillary", "Solution"]
+MECH_COLOR = {
     "Blocked":  "#bdbdbd",
     "Sieving":  "#1f78b4",
     "Knudsen":  "#33a02c",
@@ -34,209 +90,211 @@ MCOLOR = {
     "Solution": "#6a3d9a",
 }
 
-def smooth_sigmoid(x, k=7.0):
-    return 1.0/(1.0 + np.exp(-k*x))
+def mean_free_path_nm(T, P_bar, d_ang):
+    kB = 1.380649e-23; P = P_bar*1e5; d = d_ang*1e-10
+    return (kB*T/(np.sqrt(2)*np.pi*d*d*P))*1e9
 
-def between_weight(x, a, b, sharp=6.0):
-    return smooth_sigmoid((x-a), k=sharp) * smooth_sigmoid((b-x), k=sharp)
+def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
+    if pore_d_nm < SOL_TH_NM:
+        return "Solution"
+    d1, d2 = PARAMS[gas1]["d"], PARAMS[gas2]["d"]
+    lam = mean_free_path_nm(T, P_bar, 0.5*(d1+d2))
+    if pore_d_nm >= 2.0 and rp > 0.5:
+        return "Capillary"
+    if pore_d_nm <= 2.0:
+        p_eff_A = pore_d_nm*10.0 + 0.8  # Å (allowance)
+        return "Blocked" if p_eff_A <= min(d1,d2) else "Sieving"
+    if pore_d_nm < 0.5*lam:
+        return "Knudsen"
+    return "Surface"
 
-def capillary_onset_relP(d_nm, T):
-    r_nm = max(d_nm/2.0, 1e-6)
-    ln_p = -KELVIN_A/(r_nm*T)
-    return float(np.exp(np.clip(ln_p, -30, 0)))
+def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
+    r = max(pore_d_nm*1e-9/2.0, 1e-12)
+    Dk = (2.0/3.0) * r * np.sqrt((8.0*R*T)/(np.pi*M))      # [m^2/s]
+    Pi = Dk / (L_m * R * T)                                # [mol m^-2 s^-1 Pa^-1]
+    return Pi
 
-def dsl_loading(T, P_bar, relP, Q1_kJ, Q2_kJ, q1, q2, b0=3e-5):
-    P0 = P_bar * 1e5
-    P  = np.clip(relP, 1e-9, 1.0) * P0
-    Q1 = max(Q1_kJ, 0.0) * 1e3
-    Q2 = max(Q2_kJ, 0.0) * 1e3
-    b1 = b0 * np.exp(Q1/(R*T))
-    b2 = b0 * np.exp(Q2/(R*T))
-    return q1*(b1*P)/(1+b1*P) + q2*(b2*P)/(1+b2*P)  # mmol/g
+def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
+    # Geometric opening factor + small Arrhenius
+    dA = PARAMS[gas]["d"] # Å
+    pA = pore_d_nm*10.0 + 0.8
+    if pA <= dA:
+        return PI_TINY
+    x = max(1.0 - (dA/pA)**2, 0.0)
+    f_open = x**2
+    Pi_ref = 5e-9  # baseline [mol m^-2 s^-1 Pa^-1] for near-threshold opening (empirical)
+    Pi = Pi_ref * f_open * np.exp(-E_SIEVE/(R*T))
+    return max(Pi, PI_TINY)
 
-def raw_scores_for_gas(gas, other, T, P_bar, d_nm, relP, loading_self, loading_other):
-    relP = np.asarray(relP)
-    M, d_ang = GASES[gas]
-    _, d_o   = GASES[other]
-    d_small, d_large = sorted([d_ang, d_o])
-    p_eff = d_nm*10.0  # Å
-    r = max(d_nm/2.0, 1e-6)
+def pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa):
+    # Pi_surf ≈ (D_s/L) * (dq/dp) * rho_eff
+    Ds = D0_SURF * np.exp(-PARAMS[gas]["Ea_s"]/(R*T))
+    Pi = (Ds / L_m) * (dqdp_molkgPa * RHO_EFF)             # [mol m^-2 s^-1 Pa^-1]
+    return max(Pi, 0.0)
 
-    # Blocked: 너무 작을 때만 커지게(완만)
-    gap   = (d_small - p_eff)
-    scale = max(d_small*0.55, 0.8)
-    blocked_raw = smooth_sigmoid(gap/scale, k=2.0)
+def pintr_capillary_SI(pore_d_nm, rp, L_m):
+    # Simple proxy: Pi_cap ~ K_cap * sqrt(r)/L if above Kelvin-like threshold
+    r_m = max(pore_d_nm*1e-9/2.0, 1e-12)
+    thresh = np.exp(-120.0/( (pore_d_nm/2.0)*rp*300.0 + 1e-12 ))  # heuristic; rp in 0-1
+    if rp <= thresh:
+        return 0.0
+    return K_CAP * np.sqrt(r_m) / L_m
 
-    # Sieving: 두 지름 사이에서 강함(핵+부드러움 혼합)
-    sieve_core  = between_weight(p_eff, d_small, d_large, sharp=7.0)
-    sieve_wide  = between_weight(p_eff, 0.95*d_small, 1.05*d_large, sharp=2.0)
-    sieving_raw = 0.85*sieve_core + 0.15*sieve_wide
+def pintr_solution_SI(gas, T, L_m, dqdp_molkgPa):
+    # Pi_sol = (D_sol * S) / L ; S ~ dq/dp * rho_eff (mol/m^3/Pa)
+    Dsol = D0_SOL * np.exp(-E_D_SOL/(R*T)) / np.sqrt(PARAMS[gas]["M"]/1e-3)  # /sqrt(g/mol) scaling
+    Pi = (Dsol / L_m) * (dqdp_molkgPa * RHO_EFF)
+    return max(Pi, 0.0)
 
-    # sieving 창에서는 차단을 강하게 억제
-    in_window = (p_eff >= d_small) and (p_eff <= d_large)
-    if in_window:
-        blocked_raw *= 0.05
-        sieving_raw  = max(sieving_raw, 0.6)
-
-    # Knudsen: 큰 r/√M, 낮은 P, 낮은 loading에서
-    porosity_factor = smooth_sigmoid(0.7 - loading_self/10.0, k=3.5)
-    lowP_factor     = smooth_sigmoid(0.5 - relP, k=8.0)
-    knudsen_raw     = (r/np.sqrt(M)) * porosity_factor * lowP_factor
-
-    # Surface: 작은 기공, 낮은 T, loading↑
-    surface_raw = (loading_self/10.0) * smooth_sigmoid(0.9 - d_nm, k=5.0) * smooth_sigmoid(270.0 - T, k=0.03)
-
-    # Capillary: Kelvin-onset 이후 급격히 증가
-    p_on = capillary_onset_relP(d_nm, T)
-    capillary_raw = np.clip((relP - p_on)/(1.0 - p_on + EPS), 0.0, 1.0)
-
-    # Solution: loading↑, exp(-Ea/RT)/√M (dense 유사 경향)
-    Ea = 10.0e3  # 완만한 온도 민감도
-    solution_raw = (loading_self/10.0) * np.exp(-Ea/(R*T)) * (1.0/np.sqrt(M))
-
-    # 전부 비음수로 보장
-    raw = {
-        "Blocked":  np.maximum(blocked_raw,  0.0)*np.ones_like(relP),
-        "Sieving":  np.maximum(sieving_raw,  0.0)*np.ones_like(relP),
-        "Knudsen":  np.maximum(knudsen_raw,  0.0),
-        "Surface":  np.maximum(surface_raw,  0.0)*np.ones_like(relP),
-        "Capillary":np.maximum(capillary_raw, 0.0),
-        "Solution": np.maximum(solution_raw,  0.0)*np.ones_like(relP),
-    }
-    return raw
-
-def softmax_compete(raw, tau=0.9):
+def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
+                        q_mmolg, dqdp_molkgPa, q_other_mmolg):
     """
-    raw: dict of arrays (len = nP)
-    return: dict of softmax weights per mechanism (shape nP)
+    Returns Pi[relP] in SI units [mol m^-2 s^-1 Pa^-1]
+    Includes competitive weighting via theta_eff = q_i/(q_i+q_j)
     """
-    S = np.vstack([raw[m] for m in MECHS])   # (6, nP)
-    # 안정적 softmax
-    Z = (S / max(tau, 1e-3))
-    Z = Z - np.max(Z, axis=0, keepdims=True)
-    W = np.exp(Z)
-    W = W / (np.sum(W, axis=0, keepdims=True) + EPS)
-    out = {m: W[i] for i, m in enumerate(MECHS)}
-    return out
+    L_m = max(L_nm, 1e-3) * 1e-9  # nm -> m
+    M = PARAMS[gas]["M"]
+    Pi = np.zeros_like(relP, float)
 
-def pick_mech_from_weights(weights):
-    S = np.vstack([weights[m] for m in MECHS])  # (6, nP)
-    idx = np.argmax(S, axis=0)
-    return np.array(MECHS)[idx]
+    for i, rp in enumerate(relP):
+        rule = classify_mechanism(pore_d_nm, gas, other, T, P_bar, rp)
 
-def permeance_from_weights(weights, loading_self, loading_other):
-    # 가벼운 가중치로 경향 반영
-    w = {"Blocked":0.0, "Sieving":0.9, "Knudsen":1.0, "Surface":0.8, "Capillary":1.2, "Solution":0.7}
-    total = np.zeros_like(loading_self, dtype=float)
-    for k in MECHS:
-        total += w[k]*weights[k]
-    y = loading_self/(loading_self + loading_other + EPS)
-    return total*(0.25 + 0.75*y)
+        if   rule == "Blocked":
+            Pi0 = PI_TINY
+        elif rule == "Sieving":
+            Pi0 = pintr_sieving_SI(pore_d_nm, gas, T, L_m)
+        elif rule == "Knudsen":
+            Pi0 = pintr_knudsen_SI(pore_d_nm, T, M, L_m)
+        elif rule == "Surface":
+            Pi0 = pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa[i])
+        elif rule == "Capillary":
+            Pi0 = pintr_capillary_SI(pore_d_nm, rp, L_m)
+        elif rule == "Solution":
+            Pi0 = pintr_solution_SI(gas, T, L_m, dqdp_molkgPa[i])
+        else:
+            Pi0 = PI_TINY
 
-def synced_control(label, minv, maxv, val, step, key, host=None):
-    if host is None:
-        host = st
-    ss = st.session_state
-    vkey = f"{key}__v"
-    if vkey not in ss:
-        ss[vkey] = float(val)
-    c1, c2 = host.columns([7, 3])
-    with c1:
-        sval = st.slider(label, float(minv), float(maxv), float(ss[vkey]),
-                         step=float(step), key=f"{key}__s")
-    with c2:
-        nval = st.number_input(" ", min_value=float(minv), max_value=float(maxv),
-                               value=float(ss[vkey]), step=float(step),
-                               key=f"{key}__n", label_visibility="collapsed")
-    if nval != ss[vkey]:
-        ss[vkey] = float(nval)
-    elif sval != ss[vkey]:
-        ss[vkey] = float(sval)
-    return float(ss[vkey])
+        # competitive weighting (IAST-like): adsorption preference at given P
+        qi = q_mmolg[i]; qj = q_other_mmolg[i]
+        theta = (qi/(qi+qj)) if (qi+qj) > 0 else 0.0
+        Pi[i] = Pi0 * theta
 
-# ---------------- UI ----------------
-st.set_page_config(page_title="Membrane mechanisms — softmax", layout="wide")
-st.title("Membrane Transport Mechanisms")
+    return Pi
 
-left, right = st.columns([6.8, 7], gap="large")
+def mechanism_band_rgba(g1, g2, T, P_bar, d_nm, relP):
+    names = [classify_mechanism(d_nm, g1, g2, T, P_bar, r) for r in relP]
+    rgba = np.array([to_rgba(MECH_COLOR[n]) for n in names])[None, :, :]
+    return rgba, names
 
-with left:
-    st.subheader("Global")
-    gases = list(GASES.keys())
-    gas1 = st.selectbox("Gas 1 (numerator)", gases, index=gases.index("H2"))
-    gas2 = st.selectbox("Gas 2 (denominator)", gases, index=gases.index("CH4"))
+# ---------------------------- Streamlit UI ----------------------------
+st.set_page_config(page_title="Membrane Permeance (SI)", layout="wide")
+st.title("Membrane Transport Simulator (SI units)")
 
-    T    = synced_control("Temperature (K)",       10.0, 600.0, 300.0, 1.0,  "T",  host=left)
-    Pbar = synced_control("Total pressure (bar)",   0.1,  10.0,   1.0, 0.1,  "P",  host=left)
-    d_nm = synced_control("Pore diameter (nm)",    0.10,  10.0,  0.35, 0.01, "d",  host=left)  # 기본 0.35nm로
+with st.sidebar:
+    st.header("Global Conditions")
+    T = st.slider("Temperature T (K)", 10.0, 600.0, 300.0, 1.0)
+    P_bar = st.slider("Total Pressure P (bar)", 0.1, 10.0, 1.0, 0.1)
+    d_nm = st.slider("Pore diameter d (nm)", 0.01, 50.0, 0.34, 0.01)
+    L_nm = st.slider("Membrane thickness L (nm)", 10.0, 1000.0, 100.0, 1.0)
 
-    st.subheader("Double-site Langmuir — Gas 1")
-    Q11 = synced_control("Qst1 (kJ/mol) [Gas 1]",  0.0, 100.0, 20.0, 0.5, "Q11", host=left)
-    Q12 = synced_control("Qst2 (kJ/mol) [Gas 1]",  0.0, 100.0, 10.0, 0.5, "Q12", host=left)
-    q11 = synced_control("q1 (mmol/g) [Gas 1]",    0.0,  10.0,  1.2,  0.05,"q11", host=left)
-    q12 = synced_control("q2 (mmol/g) [Gas 1]",    0.0,  10.0,  0.6,  0.05,"q12", host=left)
+    gases = list(PARAMS.keys())
+    gas1 = st.selectbox("Gas1 (numerator)", gases, index=gases.index("C3H6"))
+    gas2 = st.selectbox("Gas2 (denominator)", gases, index=gases.index("C3H8"))
 
-    st.subheader("Double-site Langmuir — Gas 2")
-    Q21 = synced_control("Qst1 (kJ/mol) [Gas 2]",  0.0, 100.0, 18.0, 0.5, "Q21", host=left)
-    Q22 = synced_control("Qst2 (kJ/mol) [Gas 2]",  0.0, 100.0,  8.0, 0.5, "Q22", host=left)
-    q21 = synced_control("q1 (mmol/g) [Gas 2]",    0.0,  10.0,  1.0,  0.05,"q21", host=left)
-    q22 = synced_control("q2 (mmol/g) [Gas 2]",    0.0,  10.0,  0.5,  0.05,"q22", host=left)
+    st.header("DSL parameters (each gas)")
+    st.caption("Qst: 0–100 kJ/mol, q: 0–5 mmol/g (double site)")
 
-# -------------- Simulation --------------
-relP = np.linspace(0.01, 0.99, 420)
+    st.subheader("Gas1")
+    Q11 = st.slider("Qst1 Gas1 (kJ/mol)", 0.0, 100.0, 27.0, 0.1)
+    Q12 = st.slider("Qst2 Gas1 (kJ/mol)", 0.0, 100.0, 18.0, 0.1)
+    q11 = st.slider("q1 Gas1 (mmol/g)",   0.0, 5.0,   0.70, 0.01)
+    q12 = st.slider("q2 Gas1 (mmol/g)",   0.0, 5.0,   0.30, 0.01)
 
-load1 = dsl_loading(T, Pbar, relP, Q11, Q12, q11, q12)
-load2 = dsl_loading(T, Pbar, relP, Q21, Q22, q21, q22)
+    st.subheader("Gas2")
+    Q21 = st.slider("Qst1 Gas2 (kJ/mol)", 0.0, 100.0, 26.5, 0.1)
+    Q22 = st.slider("Qst2 Gas2 (kJ/mol)", 0.0, 100.0, 17.0, 0.1)
+    q21 = st.slider("q1 Gas2 (mmol/g)",   0.0, 5.0,   0.70, 0.01)
+    q22 = st.slider("q2 Gas2 (mmol/g)",   0.0, 5.0,   0.30, 0.01)
 
-raw1 = raw_scores_for_gas(gas1, gas2, T, Pbar, d_nm, relP, load1, load2)
-raw2 = raw_scores_for_gas(gas2, gas1, T, Pbar, d_nm, relP, load2, load1)
+# Calculation
+relP = np.linspace(0.01, 0.99, 500)
 
-w1 = softmax_compete(raw1, tau=0.9)   # 각 지점에서 6개 메커니즘 softmax 경쟁!
-w2 = softmax_compete(raw2, tau=0.9)
+q1_mmolg, dqdp1 = dsl_loading_and_slope(gas1, T, P_bar, relP, q11, q12, Q11, Q12)
+q2_mmolg, dqdp2 = dsl_loading_and_slope(gas2, T, P_bar, relP, q21, q22, Q21, Q22)
 
-mechs_g1 = pick_mech_from_weights(w1)
+Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, P_bar, relP, L_nm, q1_mmolg, dqdp1, q2_mmolg)
+Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, P_bar, relP, L_nm, q2_mmolg, dqdp2, q1_mmolg)
+Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2>0))
 
-perm1 = permeance_from_weights(w1, load1, load2)
-perm2 = permeance_from_weights(w2, load2, load1)
-sel   = np.where(perm2 > 0, perm1/perm2, 0.0)
+# Mechanism band
+rgba, mech_names = mechanism_band_rgba(gas1, gas2, T, P_bar, d_nm, relP)
 
-# -------------- Plots --------------
-with right:
-    # Mechanism band
-    rgba = np.array([to_rgba(MCOLOR[m]) for m in mechs_g1])[None, :, :]
-    figB, axB = plt.subplots(figsize=(9.0, 1.6))
-    axB.imshow(rgba, extent=(0, 1, 0, 1), origin="lower", aspect="auto")
-    axB.set_yticks([]); axB.set_xlim(0, 1)
-    axB.set_xlabel("Relative pressure (P/P0)")
-    axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-    st.pyplot(figB); plt.close(figB)
+# ---------------------------- Layout: Plots ----------------------------
+colA, colB = st.columns([1,2])
 
+with colB:
+    st.subheader("Mechanism map (along relative pressure)")
+    figBand, axBand = plt.subplots(figsize=(9, 0.7))
+    axBand.imshow(rgba, extent=(0,1,0,1), aspect='auto', origin='lower')
+    axBand.set_yticks([])
+    axBand.set_xticks([0,0.2,0.4,0.6,0.8,1.0])
+    axBand.set_xlim(0,1)
     # Legend
-    handles = [plt.Rectangle((0,0), 1,1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
-    figL, axL = plt.subplots(figsize=(9.0, 1.2))
-    axL.axis("off")
-    figL.legend(handles=handles, ncol=6, loc="center", frameon=True)
-    st.pyplot(figL); plt.close(figL)
+    handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
+    leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
+                        ncol=6, frameon=True)
+    leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
+    st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
-    # Permeance curves
-    fig1, ax1 = plt.subplots(figsize=(9.0, 3.0))
-    ax1.plot(relP, perm1, label=f"Permeance {gas1}")
-    ax1.plot(relP, perm2, "--", label=f"Permeance {gas2}")
-    ax1.set_xlabel("Relative pressure (P/P0)")
-    ax1.set_ylabel("Permeance (mol*m⁻2*s⁻1*Pa⁻1)")
+    st.subheader("Permeance (SI)")
+    fig1, ax1 = plt.subplots(figsize=(9,3))
+    ax1.plot(relP, Pi1, label=f"{gas1}")
+    ax1.plot(relP, Pi2, '--', label=f"{gas2}")
+    ax1.set_ylabel(r"$\Pi$  (mol m$^{-2}$ s$^{-1}$ Pa$^{-1}$)")
+    ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax1.grid(True); ax1.legend()
-    st.pyplot(fig1); plt.close(fig1)
+    st.pyplot(fig1, use_container_width=True); plt.close(fig1)
 
-    # Selectivity
-    fig2, ax2 = plt.subplots(figsize=(9.0, 3.0))
-    ax2.plot(relP, sel, label=f"Selectivity {gas1}/{gas2}")
-    ax2.set_xlabel("Relative pressure (P/P0)")
-    ax2.set_ylabel("Selectivity (-)")
+    st.subheader("Selectivity")
+    fig2, ax2 = plt.subplots(figsize=(9,3))
+    ax2.plot(relP, Sel, label=f"{gas1}/{gas2}")
+    ax2.set_ylabel("Selectivity (–)")
+    ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax2.grid(True); ax2.legend()
-    st.pyplot(fig2); plt.close(fig2)
+    st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
-    mid = len(relP)//2
-    st.caption(
-        f"Dominant near P/P0={relP[mid]:.2f}: **{mechs_g1[mid]}**  "
-        f"(Tip) For sieving, set pore≈{(GASES[gas1][1]+GASES[gas2][1])/20:.2f} nm."
+with colA:
+    st.subheader("Mechanism (rule) vs intrinsic (Gas1)")
+    rp_mid = relP[len(relP)//2]
+    # Intrinsic comparison at mid P/P0 for Gas1
+    L_m = L_nm*1e-9
+    M1 = PARAMS[gas1]["M"]
+    # mid-point slopes for solution/surface
+    dqdp1_mid = dqdp1[len(relP)//2]
+    # candidates (without competitive weighting)
+    cand = {
+        "Blocked":  PI_TINY,
+        "Sieving":  pintr_sieving_SI(d_nm, gas1, T, L_m),
+        "Knudsen":  pintr_knudsen_SI(d_nm, T, M1, L_m),
+        "Surface":  pintr_surface_SI(d_nm, gas1, T, L_m, dqdp1_mid),
+        "Capillary":pintr_capillary_SI(d_nm, rp_mid, L_m),
+        "Solution": pintr_solution_SI(gas1, T, L_m, dqdp1_mid),
+    }
+    best_intrinsic = max(cand, key=cand.get)
+    rule_mech = classify_mechanism(d_nm, gas1, gas2, T, P_bar, rp_mid)
+
+    st.markdown(
+        f"**Mechanism (rule):** `{rule_mech}` &nbsp;&nbsp; | &nbsp;&nbsp;"
+        f"**Best intrinsic (Gas1):** `{best_intrinsic}`"
     )
+    st.caption(
+        "Intrinsic permeance proxies at mid $P/P_0$ (no competition):  \n"
+        + "  • " + "  \n  • ".join([f"{k}: {v:.3e} mol m⁻² s⁻¹ Pa⁻¹" for k,v in cand.items()])
+    )
+
+st.markdown("---")
+st.caption(
+    "Notes: (1) All permeance values are in SI units mol·m⁻²·s⁻¹·Pa⁻¹. "
+    "(2) Capillary & Sieving terms use calibrated proxies in SI scale for visualization. "
+    "(3) Surface/Solution use DSL slope (∂q/∂p) to convert sorption response into flux capacity."
+)
