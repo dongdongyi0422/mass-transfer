@@ -1,4 +1,5 @@
-# app.py — Forced-sieving + Permeance & Selectivity (Streamlit)
+# app.py — Forced-sieving simulator with Permeance/Selectivity
+# Slider + Number Input + ± Buttons (fully synced)
 
 import numpy as np
 import matplotlib
@@ -10,15 +11,15 @@ import streamlit as st
 # -------------------- Constants & Gas DB --------------------
 R = 8.314  # J/mol/K
 
-# 튜닝 파라미터 (sieving이 잘 드러나도록)
-FLEX_A = 0.2        # Å, 유효기공 보정 (p_eff = d_nm*10 + FLEX_A)
-SIEV_A = 2.5        # sieving 가중치
-CAP_A  = 0.45       # capillary 가중치
-RELPA_CONST = -150  # capillary 임계 상대압력 계수(보수적으로; 쉬이 켜지지 않도록)
+# 튜닝 파라미터 (sieving 가시성↑)
+FLEX_A = 0.2        # Å, p_eff = d_nm*10 + FLEX_A
+SIEV_A = 2.5        # sieving weight
+CAP_A  = 0.45       # capillary weight
+RELPA_CONST = -150  # capillary onset (더 보수적으로)
 
-THICK_M = 100e-9    # m, 임의 두께(Permeance 산정 스케일)
-E_D_SOL = 1.8e4     # J/mol, solution-diffusion 활성화
-E_D_SRF = 9.0e3     # J/mol, surface-diffusion 활성화
+THICK_M = 100e-9    # m, arbitrary thickness for permeance scale
+E_D_SOL = 1.8e4     # J/mol
+E_D_SRF = 9.0e3     # J/mol
 
 # (분자량, 운동지름 Å)
 GASES = {
@@ -44,12 +45,83 @@ MCOLOR = {
     "Solution": "#6a3d9a",
 }
 
+# -------------------- UI helper: slider + number + ± buttons --------------------
+def control_with_buttons(label, minv, maxv, default, step, key, host=None, fmt="float"):
+    """
+    한 줄에 [슬라이더 | 숫자입력 | - | +]를 배치하고 모두 동기화.
+    - fmt="float" or "int"
+    """
+    if host is None:
+        host = st
+    ss = st.session_state
+    vkey = f"{key}__val"
+    skey = f"{key}__slider"
+    nkey = f"{key}__number"
+    dkey = f"{key}__dec"
+    pkey = f"{key}__inc"
+
+    # 초기값
+    if vkey not in ss:
+        ss[vkey] = float(default)
+
+    # 증감 계산 함수
+    def _clip(v):
+        v = float(v)
+        v = max(minv, min(maxv, v))
+        if fmt == "int":
+            # 정수 스텝에 맞게 반올림
+            return float(int(round(v)))
+        return v
+
+    # 버튼 클릭 처리 (먼저 처리)
+    bcol = host.columns([7, 2.2, 0.6, 0.6])  # slider | number | - | +
+    with bcol[2]:
+        dec = st.button("−", key=dkey)
+    with bcol[3]:
+        inc = st.button("+", key=pkey)
+    if dec:
+        ss[vkey] = _clip(ss[vkey] - step)
+    if inc:
+        ss[vkey] = _clip(ss[vkey] + step)
+
+    # 슬라이더와 숫자입력
+    with bcol[0]:
+        sval = st.slider(
+            label, float(minv), float(maxv), float(ss[vkey]),
+            step=float(step), key=skey, label_visibility="visible"
+        )
+    with bcol[1]:
+        if fmt == "int":
+            nval = st.number_input(
+                " ", min_value=float(minv), max_value=float(maxv),
+                value=float(ss[vkey]), step=float(step),
+                key=nkey, label_visibility="collapsed", format="%.0f"
+            )
+        else:
+            nval = st.number_input(
+                " ", min_value=float(minv), max_value=float(maxv),
+                value=float(ss[vkey]), step=float(step),
+                key=nkey, label_visibility="collapsed"
+            )
+
+    # 동기화: 최근 변경을 반영
+    # 우선순위: 버튼 → 숫자입력 → 슬라이더
+    new_val = ss[vkey]
+    if nval != ss[vkey]:
+        new_val = nval
+    if sval != ss[vkey]:
+        new_val = sval
+    ss[vkey] = _clip(new_val)
+
+    # 슬라이더/입력칸을 세션 값에 맞춰 정렬 (Streamlit rerun으로 대개 정렬됨)
+    return float(ss[vkey])
+
 # -------------------- Adsorption (Double-site Langmuir) --------------------
 def dsl_loading(T, P_bar, relP, Q1_kJ, Q2_kJ, q1, q2, b0=1e-4):
     """
     q(relP) = q1*b1*P/(1+b1*P) + q2*b2*P/(1+b2*P)
     - Q in kJ/mol, q in mmol/g
-    - P = relP * (P_bar*1e5) [Pa], 단순 스케일용
+    - P = relP * (P_bar*1e5) [Pa], 단순 스케일
     """
     P0 = P_bar * 1e5
     Q1 = max(Q1_kJ, 0.0) * 1e3
@@ -61,69 +133,58 @@ def dsl_loading(T, P_bar, relP, Q1_kJ, Q2_kJ, q1, q2, b0=1e-4):
 
 # -------------------- Mechanism proxies --------------------
 def proxy_knudsen(d_nm, M):
-    # 크면 커짐, 가벼울수록 커짐
     return (d_nm/2.0) / np.sqrt(M)
 
 def proxy_sieving(d_nm, d_ang, T):
-    # 기공이 분자보다 살짝 클수록 커짐 + 온도 낮을수록 유리
     p_eff = d_nm*10.0 + FLEX_A  # nm->Å
     x = 1.0 - (d_ang/p_eff)**2
     return SIEV_A * np.clip(x, 0.0, None)**2 * np.exp(-9.0e3/(R*T))
 
 def proxy_surface(d_nm, T, loading_mmolg):
-    # 흡착량이 클수록, T 낮을수록 유리; 작은 기공에서 유리
     return np.exp(-E_D_SRF/(R*T)) * loading_mmolg / np.maximum(d_nm, 1e-9)
 
 def proxy_capillary(d_nm, T, relP, cap_scale):
-    # 임계 relP_th 이상에서만 활성; 작은 기공에서 임계가 높음
     r = max(d_nm/2.0, 1e-9)  # nm
-    relP_th = np.exp(RELPA_CONST/(r*T))  # 보수적
+    relP_th = np.exp(RELPA_CONST/(r*T))  # conservative
     return CAP_A * cap_scale*np.sqrt(r) * np.clip(relP - relP_th, 0.0, None)
 
 def proxy_solution(T, loading_mmolg, M):
-    # 용해·확산: 흡착량 + 1/sqrt(M)
     return np.exp(-E_D_SOL/(R*T)) / np.sqrt(M) * np.maximum(loading_mmolg, 0.0)
 
 # -------------------- Forced-sieving rule per gas --------------------
 def proxies_for_gas(gas, other, T, P_bar, d_nm, relP, load_self, load_other):
     """
-    각 relP에서 gas에 대한 6개 메커니즘 proxy 배열을 반환.
-    - 강제 sieving 규칙:
+    각 relP에서 gas에 대한 6개 메커니즘 proxy 배열 반환.
+    - 강제 sieving:
         p_eff(Å)가 두 분자 지름 사이면:
-          작은 분자 gas → Sieving만 활성(큼), 나머지 0
+          작은 분자 gas → Sieving만 활성(아주 큼), 나머지 0
           큰  분자 gas → Blocked=1, 나머지 0
         p_eff <= min_d → 모두 Blocked
-    - 그 외: 일반 proxy 계산
+    - 그 외: 일반 proxy 경쟁
     """
     M, d_ang = GASES[gas]
     d_other = GASES[other][1]
     d_small, d_large = sorted([d_ang, d_other])
     p_eff = d_nm*10.0 + FLEX_A
 
-    # 공통 배열 생성
     relP = np.asarray(relP)
     zeros = np.zeros_like(relP, dtype=float)
     ones  = np.ones_like(relP, dtype=float)
 
-    # 완전 차단 영역
     if p_eff <= d_small:
         return {"Blocked": ones, "Sieving": zeros, "Knudsen": zeros,
                 "Surface": zeros, "Capillary": zeros, "Solution": zeros}
 
-    # 강제 sieving 영역
     if d_small < p_eff < d_large:
         if d_ang == d_small:
-            # 현재 gas가 작은 분자 → sieving 통과
-            siev = 1e3 * ones  # 매우 크게 하여 dominant 보장
+            siev = 1e3 * ones  # dominant 보장
             return {"Blocked": zeros, "Sieving": siev, "Knudsen": zeros,
                     "Surface": zeros, "Capillary": zeros, "Solution": zeros}
         else:
-            # 현재 gas가 큰 분자 → 차단
             return {"Blocked": ones, "Sieving": zeros, "Knudsen": zeros,
                     "Surface": zeros, "Capillary": zeros, "Solution": zeros}
 
-    # 일반 영역: proxy 경쟁
-    cap_scale = 0.6 if gas == "CO2" else 0.5  # 간단 가중(원하면 테이블화 가능)
+    cap_scale = 0.6 if gas == "CO2" else 0.5
     siev = proxy_sieving(d_nm, d_ang, T) * np.ones_like(relP)
     knud = proxy_knudsen(d_nm, M) * np.ones_like(relP)
     surf = proxy_surface(d_nm, T, load_self)
@@ -141,35 +202,36 @@ def pick_mechanism(prox_dict):
 def permeance_from_proxies(prox_dict, load_self, load_other):
     arr = np.vstack([prox_dict[m] for m in MECHS])
     maxp = arr.max(axis=0)
-    y = load_self / (load_self + load_other + 1e-30)  # 조성 가중
+    y = load_self / (load_self + load_other + 1e-30)
     return (maxp * y) / THICK_M
 
-# -------------------- UI --------------------
+# -------------------- Streamlit UI --------------------
 st.set_page_config(page_title="Membrane mechanisms", layout="wide")
-st.title("Membrane Transport Mechanisms — forced sieving with permeance/selectivity")
+st.title("Membrane Transport Mechanisms — forced sieving + ± controls")
 
-left, right = st.columns([5, 7], gap="large")
+left, right = st.columns([6, 7], gap="large")  # 왼쪽 더 넓게
 
 with left:
     st.subheader("Global")
     gases = list(GASES.keys())
     gas1 = st.selectbox("Gas 1 (numerator)", gases, index=gases.index("H2"))
     gas2 = st.selectbox("Gas 2 (denominator)", gases, index=gases.index("CH4"))
-    T    = st.slider("Temperature (K)", 10.0, 600.0, 300.0, 1.0)
-    Pbar = st.slider("Total pressure (bar)", 0.1, 10.0, 1.0, 0.1)
-    d_nm = st.slider("Pore diameter (nm)", 0.01, 50.0, 0.34, 0.01)
+
+    T    = control_with_buttons("Temperature (K)",       10.0, 600.0, 300.0, 1.0,  "T",    host=left)
+    Pbar = control_with_buttons("Total pressure (bar)",   0.1,  10.0,   1.0, 0.1,  "P",    host=left)
+    d_nm = control_with_buttons("Pore diameter (nm)",    0.01,  50.0,  0.34, 0.01, "d",    host=left)
 
     st.subheader("Double-site Langmuir — Gas 1")
-    Q11 = st.slider("Qst1 (kJ/mol) [Gas 1]", 0.0, 100.0, 12.0, 0.1)
-    Q12 = st.slider("Qst2 (kJ/mol) [Gas 1]", 0.0, 100.0, 10.0, 0.1)
-    q11 = st.slider("q1 (mmol/g) [Gas 1]",   0.0, 10.0, 0.20, 0.01)
-    q12 = st.slider("q2 (mmol/g) [Gas 1]",   0.0, 10.0, 0.10, 0.01)
+    Q11 = control_with_buttons("Qst1 (kJ/mol) [Gas 1]", 0.0, 100.0, 12.0, 0.1, "Q11", host=left)
+    Q12 = control_with_buttons("Qst2 (kJ/mol) [Gas 1]", 0.0, 100.0, 10.0, 0.1, "Q12", host=left)
+    q11 = control_with_buttons("q1 (mmol/g) [Gas 1]",   0.0,  10.0,  0.20, 0.01, "q11", host=left)
+    q12 = control_with_buttons("q2 (mmol/g) [Gas 1]",   0.0,  10.0,  0.10, 0.01, "q12", host=left)
 
     st.subheader("Double-site Langmuir — Gas 2")
-    Q21 = st.slider("Qst1 (kJ/mol) [Gas 2]", 0.0, 100.0, 12.0, 0.1)
-    Q22 = st.slider("Qst2 (kJ/mol) [Gas 2]", 0.0, 100.0, 10.0, 0.1)
-    q21 = st.slider("q1 (mmol/g) [Gas 2]",   0.0, 10.0, 0.20, 0.01)
-    q22 = st.slider("q2 (mmol/g) [Gas 2]",   0.0, 10.0, 0.10, 0.01)
+    Q21 = control_with_buttons("Qst1 (kJ/mol) [Gas 2]", 0.0, 100.0, 12.0, 0.1, "Q21", host=left)
+    Q22 = control_with_buttons("Qst2 (kJ/mol) [Gas 2]", 0.0, 100.0, 10.0, 0.1, "Q22", host=left)
+    q21 = control_with_buttons("q1 (mmol/g) [Gas 2]",   0.0,  10.0,  0.20, 0.01, "q21", host=left)
+    q22 = control_with_buttons("q2 (mmol/g) [Gas 2]",   0.0,  10.0,  0.10, 0.01, "q22", host=left)
 
 # -------------------- Simulation --------------------
 relP = np.linspace(0.01, 0.99, 400)
@@ -182,7 +244,7 @@ load2 = dsl_loading(T, Pbar, relP, Q21, Q22, q21, q22)
 prox1 = proxies_for_gas(gas1, gas2, T, Pbar, d_nm, relP, load1, load2)
 prox2 = proxies_for_gas(gas2, gas1, T, Pbar, d_nm, relP, load2, load1)
 
-# Dominant mechanism band (Gas1 기준)
+# Dominant mechanism band (Gas1)
 mechs_g1 = pick_mechanism(prox1)
 
 # Permeance & Selectivity
@@ -192,7 +254,7 @@ sel   = np.where(perm2 > 0, perm1/perm2, 0.0)
 
 # -------------------- Plots --------------------
 with right:
-    # Mechanism band (Gas1 dominant)
+    # Mechanism band
     rgba = np.array([to_rgba(MCOLOR[m]) for m in mechs_g1])[None, :, :]
     figB, axB = plt.subplots(figsize=(9, 1.6))
     axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
@@ -201,7 +263,7 @@ with right:
     axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
     st.pyplot(figB); plt.close(figB)
 
-    # Legend (separate)
+    # Legend
     handles = [plt.Rectangle((0, 0), 1, 1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
     figL, axL = plt.subplots(figsize=(9, 1.2))
     axL.axis("off")
@@ -225,10 +287,6 @@ with right:
     ax2.grid(True); ax2.legend()
     st.pyplot(fig2); plt.close(fig2)
 
-    # Text summary at mid P/P0
+    # Summary
     mid = len(relP)//2
-    # 현재 조건에서 두 가스 각각의 지배 메커니즘
-    g1_mech_now = pick_mechanism({k: v for k, v in prox1.items()})
-    g2_mech_now = pick_mechanism({k: v for k, v in prox2.items()})
-    st.write(f"Gas1 dominant near P/P0={relP[mid]:.2f}: {g1_mech_now[mid]}")
-    st.write(f"Gas2 dominant near P/P0={relP[mid]:.2f}: {g2_mech_now[mid]}")
+    st.write(f"Gas1 dominant near P/P0={relP[mid]:.2f}: {mechs_g1[mid]}")
