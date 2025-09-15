@@ -25,7 +25,7 @@ PI_TINY = 1e-14   # mol m^-2 s^-1 Pa^-1 (numerical floor)
 SOL_TH_NM = 0.30  # nm: solution-diffusion favored at/under this pore size (<=)
 # 상단 상수
 DELTA_SOFT_A = 0.50    # [Å] 근계 폭; 0.4~0.6에서 조정
-PI_SOFT_REF  = 1e-8    # [mol m^-2 s^-1 Pa^-1] 근계 투과 기준 (수 μGPU~수십 GPU 수준으로 조절)
+PI_SOFT_REF  = 1e-6    # [mol m^-2 s^-1 Pa^-1] 근계 투과 기준 (수 μGPU~수십 GPU 수준으로 조절)
 # 체거름 경계 완충대 / Knudsen 여유폭(Å)
 SIEVE_BAND_A = 0.15
 DELTA_A      = 0.4
