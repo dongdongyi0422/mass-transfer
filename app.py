@@ -20,7 +20,7 @@ D0_SURF = 1e-9    # m^2/s   (surface diffusion scale)
 D0_SOL  = 1e-10   # m^2/s   (solution diffusion scale)
 E_D_SOL = 1.8e4   # J/mol   (solution diffusion activation)
 K_CAP   = 1e-7    # (mol m^-1.5 s^-1 Pa^-1) capillary proxy scale
-E_SIEVE = 9.0e3   # J/mol   (near-threshold sieving barrier)
+E_SIEVE = 6.0e3   # J/mol   (near-threshold sieving barrier)
 PI_TINY = 1e-14   # mol m^-2 s^-1 Pa^-1 (numerical floor)
 SOL_TH_NM = 0.30  # nm: solution-diffusion favored at/under this pore size (<=)
 
@@ -178,7 +178,7 @@ def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
         return PI_TINY
     x = max(1.0 - (dA/pA)**2, 0.0)
     f_open = x**2
-    Pi_ref = 5e-9
+    Pi_ref = 3e-4
     Pi = Pi_ref * f_open * np.exp(-E_SIEVE/(R*T))
     return max(Pi, PI_TINY)
 
