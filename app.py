@@ -171,16 +171,28 @@ def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
     Pi = Dk / (L_m * R * T)
     return Pi
 
+# 상단 상수
+    DELTA_SOFT_A = 0.50    # [Å] 근계 폭; 0.4~0.6에서 조정
+    PI_SOFT_REF  = 1e-8    # [mol m^-2 s^-1 Pa^-1] 근계 투과 기준 (수 μGPU~수십 GPU 수준으로 조절)
+
 def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
-    dA = PARAMS[gas]["d"]
-    pA = pore_d_nm*10.0
-    if pA <= dA - SIEVE_BAND_A:
-        return PI_TINY
+    dA = PARAMS[gas]["d"]       # Å
+    pA = pore_d_nm * 10.0       # Å
+    delta = dA - pA             # >0 이면 기공이 더 작음(차단 경향)
+
+    if delta > 0:
+        # --- 소프트 차단 (gate opening/tunneling proxy) ---
+        # delta가 작을수록(경계에 가까울수록) 유한한 투과 발생
+        Pi_gate = PI_SOFT_REF * np.exp(- (delta/DELTA_SOFT_A)**2) * np.exp(-E_SIEVE/(R*T))
+        return max(Pi_gate, PI_TINY)
+
+    # --- 기공이 더 큰 경우: 기존 체거름 식 ---
     x = max(1.0 - (dA/pA)**2, 0.0)
     f_open = x**2
-    Pi_ref = 3e-4
+    Pi_ref = 3e-4   # 문헌 스케일(수십~백 GPU)을 맞추기 위한 보정치
     Pi = Pi_ref * f_open * np.exp(-E_SIEVE/(R*T))
     return max(Pi, PI_TINY)
+
 
 def pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa):
     Ds = D0_SURF * np.exp(-PARAMS[gas]["Ea_s"]/(R*T))
