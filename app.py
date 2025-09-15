@@ -1,4 +1,4 @@
-# app.py — Membrane mechanism simulator (Streamlit, previous layout)
+# app.py — Membrane mechanism simulator (Controls left, Plots right)
 
 import numpy as np
 import matplotlib
@@ -37,8 +37,11 @@ MCOLOR = {
     "Solution": "#6a3d9a",
 }
 
-# ---------------- Helpers (slider + number box sync) ----------------
-def slider_with_box(label, minv, maxv, default, step, key):
+# ---------------- Helpers: wide slider + number box in a host column ----------------
+def slider_with_box(label, minv, maxv, default, step, key, host=None):
+    """Place a slider + number box inside 'host' (left column)."""
+    if host is None:
+        host = st
     ss = st.session_state
     vkey = f"{key}_val"
     skey = f"{key}_slider"
@@ -52,13 +55,12 @@ def slider_with_box(label, minv, maxv, default, step, key):
     def _from_box():
         ss[vkey] = float(ss[bkey]); ss[skey] = float(ss[bkey])
 
-    # 예전 형식: 비율 [4,1]
-    col1, col2 = st.columns([4, 1])
-    col1.slider(label, float(minv), float(maxv), float(ss[vkey]),
-                step=float(step), key=skey, on_change=_from_slider)
-    col2.number_input(" ", float(minv), float(maxv), float(ss[vkey]),
-                      step=float(step), key=bkey, label_visibility="collapsed",
-                      on_change=_from_box)
+    c1, c2 = host.columns([4, 1])
+    c1.slider(label, float(minv), float(maxv), float(ss[vkey]),
+              step=float(step), key=skey, on_change=_from_slider)
+    c2.number_input(" ", float(minv), float(maxv), float(ss[vkey]),
+                    step=float(step), key=bkey, label_visibility="collapsed",
+                    on_change=_from_box)
     return float(ss[vkey])
 
 # ---------------- Models ----------------
@@ -120,32 +122,36 @@ def permeance_from_proxies(prox, load_a, load_b):
     y = load_a / (load_a + load_b + 1e-30)
     return (maxp * y) / THICK_M
 
-# ---------------- UI ----------------
+# ---------------- UI (LEFT: controls, RIGHT: plots) ----------------
 st.set_page_config(page_title="Membrane mechanisms", layout="wide")
 st.title("Membrane Transport Mechanisms – robust demo")
 
-# Global controls (예전 레이아웃)
-T    = slider_with_box("Temperature (K)",       10.0, 600.0, 300.0, 1.0,  "T")
-Pbar = slider_with_box("Total pressure (bar)",   0.1,  10.0,   1.0, 0.1,  "P")
-d_nm = slider_with_box("Pore diameter (nm)",    0.01,  50.0,  0.34, 0.01, "d")
+left, right = st.columns([1, 2], gap="large")
 
-gases = list(GASES.keys())
-gas1 = st.selectbox("Gas 1 (numerator)", gases, index=gases.index("C3H6"))
-gas2 = st.selectbox("Gas 2 (denominator)", gases, index=gases.index("C3H8"))
+# ---- LEFT controls ----
+with left:
+    st.subheader("Global")
+    T    = slider_with_box("Temperature (K)",       10.0, 600.0, 300.0, 1.0,  "T",    host=left)
+    Pbar = slider_with_box("Total pressure (bar)",   0.1,  10.0,   1.0, 0.1,  "P",    host=left)
+    d_nm = slider_with_box("Pore diameter (nm)",    0.01,  50.0,  0.34, 0.01, "d",    host=left)
 
-st.subheader("Double-site Langmuir — Gas 1")
-Q11 = slider_with_box("Qst1 (kJ/mol)", 0.0, 100.0, 27.0, 0.1, "Q11")
-Q12 = slider_with_box("Qst2 (kJ/mol)", 0.0, 100.0, 18.0, 0.1, "Q12")
-q11 = slider_with_box("q1 (mmol/g)",   0.0,   5.0,  0.70, 0.01, "q11")
-q12 = slider_with_box("q2 (mmol/g)",   0.0,   5.0,  0.30, 0.01, "q12")
+    gases = list(GASES.keys())
+    gas1 = st.selectbox("Gas 1 (numerator)", gases, index=gases.index("C3H6"))
+    gas2 = st.selectbox("Gas 2 (denominator)", gases, index=gases.index("C3H8"))
 
-st.subheader("Double-site Langmuir — Gas 2")
-Q21 = slider_with_box("Qst1 (kJ/mol)", 0.0, 100.0, 26.5, 0.1, "Q21")
-Q22 = slider_with_box("Qst2 (kJ/mol)", 0.0, 100.0, 17.0, 0.1, "Q22")
-q21 = slider_with_box("q1 (mmol/g)",   0.0,   5.0,  0.70, 0.01, "q21")
-q22 = slider_with_box("q2 (mmol/g)",   0.0,   5.0,  0.30, 0.01, "q22")
+    st.subheader("Double-site Langmuir — Gas 1")
+    Q11 = slider_with_box("Qst1 (kJ/mol)", 0.0, 100.0, 27.0, 0.1, "Q11", host=left)
+    Q12 = slider_with_box("Qst2 (kJ/mol)", 0.0, 100.0, 18.0, 0.1, "Q12", host=left)
+    q11 = slider_with_box("q1 (mmol/g)",   0.0,   5.0,  0.70, 0.01, "q11", host=left)
+    q12 = slider_with_box("q2 (mmol/g)",   0.0,   5.0,  0.30, 0.01, "q12", host=left)
 
-# Data
+    st.subheader("Double-site Langmuir — Gas 2")
+    Q21 = slider_with_box("Qst1 (kJ/mol)", 0.0, 100.0, 26.5, 0.1, "Q21", host=left)
+    Q22 = slider_with_box("Qst2 (kJ/mol)", 0.0, 100.0, 17.0, 0.1, "Q22", host=left)
+    q21 = slider_with_box("q1 (mmol/g)",   0.0,   5.0,  0.70, 0.01, "q21", host=left)
+    q22 = slider_with_box("q2 (mmol/g)",   0.0,   5.0,  0.30, 0.01, "q22", host=left)
+
+# ---- Compute once ----
 relP  = np.linspace(0.01, 0.99, 300)
 load1 = dsl_loading_series(T, Pbar, relP, Q11, Q12, q11, q12)
 load2 = dsl_loading_series(T, Pbar, relP, Q21, Q22, q21, q22)
@@ -153,48 +159,51 @@ prox1 = proxies_all_for_gas(gas1, gas2, T, Pbar, d_nm, relP, load1, load2)
 prox2 = proxies_all_for_gas(gas2, gas1, T, Pbar, d_nm, relP, load2, load1)
 mechs = pick_mechanism_from_proxies(prox1)
 
-# -------- Mechanism band (예전 크기) --------
-rgba = np.array([to_rgba(MCOLOR[m]) for m in mechs])[None, :, :]
-figB, axB = plt.subplots(figsize=(8, 1.4))
-axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
-axB.set_yticks([]); axB.set_xlim(0, 1)
-axB.set_xlabel("Relative pressure (P/P0)")
-axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-st.pyplot(figB)
-plt.close(figB)
-
-# -------- Legend only --------
-handles = [plt.Rectangle((0, 0), 1, 1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
-figL, axL = plt.subplots(figsize=(8, 1.2))
-axL.axis("off")
-figL.legend(handles=handles, loc="center", ncol=6, frameon=True)
-st.pyplot(figL)
-plt.close(figL)
-
-# -------- Permeance (예전 크기) --------
 perm1 = permeance_from_proxies(prox1, load1, load2)
 perm2 = permeance_from_proxies(prox2, load2, load1)
-fig1, ax1 = plt.subplots(figsize=(8, 3))
-ax1.plot(relP, perm1, label=f"Permeance {gas1}")
-ax1.plot(relP, perm2, "--", label=f"Permeance {gas2}")
-ax1.set_ylabel("Permeance (arb. units)")
-ax1.set_xlabel("Relative pressure (P/P0)")
-ax1.grid(True); ax1.legend()
-st.pyplot(fig1)
-plt.close(fig1)
+sel   = np.where(perm2 > 0, perm1/perm2, 0.0)
 
-# -------- Selectivity (예전 크기) --------
-sel = np.where(perm2 > 0, perm1/perm2, 0.0)
-fig2, ax2 = plt.subplots(figsize=(8, 3))
-ax2.plot(relP, sel, label=f"Selectivity {gas1}/{gas2}")
-ax2.set_ylabel("Selectivity (-)")
-ax2.set_xlabel("Relative pressure (P/P0)")
-ax2.grid(True); ax2.legend()
-st.pyplot(fig2)
-plt.close(fig2)
+# ---- RIGHT plots ----
+with right:
+    # Band
+    rgba = np.array([to_rgba(MCOLOR[m]) for m in mechs])[None, :, :]
+    figB, axB = plt.subplots(figsize=(8, 1.6))
+    axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
+    axB.set_yticks([]); axB.set_xlim(0, 1)
+    axB.set_xlabel("Relative pressure (P/P0)")
+    axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    st.pyplot(figB)
+    plt.close(figB)
 
-# -------- Summary --------
-mid = len(relP)//2
-summary = {m: prox1[m][mid] for m in MECHS}
-best_m = max(summary, key=summary.get)
-st.write(f"Dominant mechanism near P/P0 = {relP[mid]:.2f}: {best_m}")
+    # Legend
+    handles = [plt.Rectangle((0, 0), 1, 1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
+    figL, axL = plt.subplots(figsize=(8, 1.2))
+    axL.axis("off")
+    figL.legend(handles=handles, loc="center", ncol=6, frameon=True)
+    st.pyplot(figL)
+    plt.close(figL)
+
+    # Permeance
+    fig1, ax1 = plt.subplots(figsize=(8, 3))
+    ax1.plot(relP, perm1, label=f"Permeance {gas1}")
+    ax1.plot(relP, perm2, "--", label=f"Permeance {gas2}")
+    ax1.set_ylabel("Permeance (arb. units)")
+    ax1.set_xlabel("Relative pressure (P/P0)")
+    ax1.grid(True); ax1.legend()
+    st.pyplot(fig1)
+    plt.close(fig1)
+
+    # Selectivity
+    fig2, ax2 = plt.subplots(figsize=(8, 3))
+    ax2.plot(relP, sel, label=f"Selectivity {gas1}/{gas2}")
+    ax2.set_ylabel("Selectivity (-)")
+    ax2.set_xlabel("Relative pressure (P/P0)")
+    ax2.grid(True); ax2.legend()
+    st.pyplot(fig2)
+    plt.close(fig2)
+
+    # Summary
+    mid = len(relP)//2
+    summary = {m: prox1[m][mid] for m in MECHS}
+    best_m = max(summary, key=summary.get)
+    st.write(f"Dominant mechanism near P/P0 = {relP[mid]:.2f}: {best_m}")
