@@ -245,14 +245,14 @@ with st.sidebar:
     st.caption("q: 0–5 mmol/g, b: 1e-8 ~ 1e-2 Pa⁻¹ (예시 범위)")
 
     st.subheader("Gas1")
-    q11 = nudged_slider("q1 Gas1",   0.0, 5.0,    0.01, 0.70, key="q11", unit="mmol/g")
-    q12 = nudged_slider("q2 Gas1",   0.0, 5.0,    0.01, 0.30, key="q12", unit="mmol/g")
+    q11 = nudged_slider("q1 Gas1",   0.0, 100.0,    0.01, 0.70, key="q11", unit="mmol/g")
+    q12 = nudged_slider("q2 Gas1",   0.0, 100.0,    0.01, 0.30, key="q12", unit="mmol/g")
     b11 = nudged_slider("b1 Gas1",   1e-8, 1e-2,  1e-8, 1e-5, key="b11", unit="Pa⁻¹", decimals=8)
     b12 = nudged_slider("b2 Gas1",   1e-8, 1e-2,  1e-8, 5e-6, key="b12", unit="Pa⁻¹", decimals=8)
 
     st.subheader("Gas2")
-    q21 = nudged_slider("q1 Gas2",   0.0, 5.0,    0.01, 0.70, key="q21", unit="mmol/g")
-    q22 = nudged_slider("q2 Gas2",   0.0, 5.0,    0.01, 0.30, key="q22", unit="mmol/g")
+    q21 = nudged_slider("q1 Gas2",   0.0, 100.0,    0.01, 0.70, key="q21", unit="mmol/g")
+    q22 = nudged_slider("q2 Gas2",   0.0, 100.0,    0.01, 0.30, key="q22", unit="mmol/g")
     b21 = nudged_slider("b1 Gas2",   1e-8, 1e-2,  1e-8, 1e-5, key="b21", unit="Pa⁻¹", decimals=8)
     b22 = nudged_slider("b2 Gas2",   1e-8, 1e-2,  1e-8, 5e-6, key="b22", unit="Pa⁻¹", decimals=8)
 
