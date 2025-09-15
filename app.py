@@ -314,8 +314,8 @@ with colB:
     gpu1 = Pi1.max() / GPU
     gpu2 = Pi2.max() / GPU
 
-    ax1.plot(relP, Pi1, label=f"{gas1} ({gpu1})")
-    ax1.plot(relP, Pi2, '--', label=f"{gas2} ({gpu2})")
+    ax1.plot(relP, Pi1, label=f"{gas1}")
+    ax1.plot(relP, Pi2, '--', label=f"{gas2}")
 
     ax1.set_ylabel(r"$\Pi$  (GPU)")
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
