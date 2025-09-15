@@ -304,15 +304,6 @@ with colB:
     leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
     st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
-    st.subheader("Permeance (SI)")
-    fig1, ax1 = plt.subplots(figsize=(9,3))
-    ax1.plot(relP, Pi1, label=f"{gas1}")
-    ax1.plot(relP, Pi2, '--', label=f"{gas2}")
-    ax1.set_ylabel(r"$\Pi$  (mol m$^{-2}$ s$^{-1}$ Pa$^{-1}$)")
-    ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-    ax1.grid(True); ax1.legend()
-    st.pyplot(fig1, use_container_width=True); plt.close(fig1)
-
     st.subheader("Selectivity")
     fig2, ax2 = plt.subplots(figsize=(9,3))
     ax2.plot(relP, Sel, label=f"{gas1}/{gas2}")
