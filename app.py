@@ -1,8 +1,10 @@
-# app.py — Membrane mechanism simulator (Controls left, Plots right)
+# app.py — Membrane mechanism simulator
+# Controls (left: wider), Plots (right)
+# Sliders <-> number inputs are synchronized, sliders use full width.
 
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # headless backend
+matplotlib.use("Agg")  # headless backend for Streamlit Cloud
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgba
 import streamlit as st
@@ -37,9 +39,11 @@ MCOLOR = {
     "Solution": "#6a3d9a",
 }
 
-# ---------------- Helpers: wide slider + number box in a host column ----------------
+# ---------------- Helpers ----------------
 def slider_with_box(label, minv, maxv, default, step, key, host=None):
-    """Place a slider + number box inside 'host' (left column)."""
+    """
+    Render a wide slider + number box, synchronized both ways.
+    """
     if host is None:
         host = st
     ss = st.session_state
@@ -55,15 +59,20 @@ def slider_with_box(label, minv, maxv, default, step, key, host=None):
     def _from_box():
         ss[vkey] = float(ss[bkey]); ss[skey] = float(ss[bkey])
 
-    c1, c2 = host.columns([4, 1])
+    # 내부 비율을 넓게([8,2]) 두어 슬라이더가 가로를 넉넉히 쓰도록
+    c1, c2 = host.columns([8, 2])
     c1.slider(label, float(minv), float(maxv), float(ss[vkey]),
-              step=float(step), key=skey, on_change=_from_slider)
+              step=float(step), key=skey, on_change=_from_slider,
+              help=None, label_visibility="visible", disabled=False)
+    # 슬라이더 폭을 컬럼 가로폭에 맞추기 위해 컨테이너 전체에 배치
+    c1.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
+
     c2.number_input(" ", float(minv), float(maxv), float(ss[vkey]),
                     step=float(step), key=bkey, label_visibility="collapsed",
                     on_change=_from_box)
     return float(ss[vkey])
 
-# ---------------- Models ----------------
+# ---------------- Mechanistic proxy models ----------------
 def dsl_loading_series(T, P_bar, relP, Q1_kJ, Q2_kJ, q1, q2, b0=1e-4):
     P0 = P_bar * 1e5
     Q1, Q2 = max(Q1_kJ, 0.0)*1e3, max(Q2_kJ, 0.0)*1e3
@@ -72,7 +81,8 @@ def dsl_loading_series(T, P_bar, relP, Q1_kJ, Q2_kJ, q1, q2, b0=1e-4):
     P = np.clip(relP, 1e-9, 1.0) * P0
     return q1 * (b1*P)/(1.0 + b1*P) + q2 * (b2*P)/(1.0 + b2*P)
 
-def proxy_knudsen(d_nm, M): return (d_nm/2.0) / np.sqrt(M)
+def proxy_knudsen(d_nm, M): 
+    return (d_nm/2.0) / np.sqrt(M)
 
 def proxy_sieving(d_nm, d_ang, T):
     p_eff = d_nm*10.0 + FLEX_A
@@ -122,13 +132,14 @@ def permeance_from_proxies(prox, load_a, load_b):
     y = load_a / (load_a + load_b + 1e-30)
     return (maxp * y) / THICK_M
 
-# ---------------- UI (LEFT: controls, RIGHT: plots) ----------------
+# ---------------- UI ----------------
 st.set_page_config(page_title="Membrane mechanisms", layout="wide")
 st.title("Membrane Transport Mechanisms – robust demo")
 
-left, right = st.columns([1, 2], gap="large")
+# 좌측을 더 넓게: [5,7] (원하면 [6,7]으로 더 넓혀도 됨)
+left, right = st.columns([5, 7], gap="large")
 
-# ---- LEFT controls ----
+# ---- LEFT: big controls ----
 with left:
     st.subheader("Global")
     T    = slider_with_box("Temperature (K)",       10.0, 600.0, 300.0, 1.0,  "T",    host=left)
@@ -151,7 +162,7 @@ with left:
     q21 = slider_with_box("q1 (mmol/g)",   0.0,   5.0,  0.70, 0.01, "q21", host=left)
     q22 = slider_with_box("q2 (mmol/g)",   0.0,   5.0,  0.30, 0.01, "q22", host=left)
 
-# ---- Compute once ----
+# ---- Compute (single pass) ----
 relP  = np.linspace(0.01, 0.99, 300)
 load1 = dsl_loading_series(T, Pbar, relP, Q11, Q12, q11, q12)
 load2 = dsl_loading_series(T, Pbar, relP, Q21, Q22, q21, q22)
@@ -163,47 +174,43 @@ perm1 = permeance_from_proxies(prox1, load1, load2)
 perm2 = permeance_from_proxies(prox2, load2, load1)
 sel   = np.where(perm2 > 0, perm1/perm2, 0.0)
 
-# ---- RIGHT plots ----
+# ---- RIGHT: plots ----
 with right:
-    # Band
+    # Mechanism band
     rgba = np.array([to_rgba(MCOLOR[m]) for m in mechs])[None, :, :]
-    figB, axB = plt.subplots(figsize=(8, 1.6))
+    figB, axB = plt.subplots(figsize=(9, 1.6))
     axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
     axB.set_yticks([]); axB.set_xlim(0, 1)
     axB.set_xlabel("Relative pressure (P/P0)")
     axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-    st.pyplot(figB)
-    plt.close(figB)
+    st.pyplot(figB); plt.close(figB)
 
     # Legend
     handles = [plt.Rectangle((0, 0), 1, 1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
-    figL, axL = plt.subplots(figsize=(8, 1.2))
+    figL, axL = plt.subplots(figsize=(9, 1.2))
     axL.axis("off")
     figL.legend(handles=handles, loc="center", ncol=6, frameon=True)
-    st.pyplot(figL)
-    plt.close(figL)
+    st.pyplot(figL); plt.close(figL)
 
     # Permeance
-    fig1, ax1 = plt.subplots(figsize=(8, 3))
+    fig1, ax1 = plt.subplots(figsize=(9, 3.2))
     ax1.plot(relP, perm1, label=f"Permeance {gas1}")
     ax1.plot(relP, perm2, "--", label=f"Permeance {gas2}")
     ax1.set_ylabel("Permeance (arb. units)")
     ax1.set_xlabel("Relative pressure (P/P0)")
     ax1.grid(True); ax1.legend()
-    st.pyplot(fig1)
-    plt.close(fig1)
+    st.pyplot(fig1); plt.close(fig1)
 
     # Selectivity
-    fig2, ax2 = plt.subplots(figsize=(8, 3))
+    fig2, ax2 = plt.subplots(figsize=(9, 3.2))
     ax2.plot(relP, sel, label=f"Selectivity {gas1}/{gas2}")
     ax2.set_ylabel("Selectivity (-)")
     ax2.set_xlabel("Relative pressure (P/P0)")
     ax2.grid(True); ax2.legend()
-    st.pyplot(fig2)
-    plt.close(fig2)
+    st.pyplot(fig2); plt.close(fig2)
 
-    # Summary
+    # Summary text
     mid = len(relP)//2
     summary = {m: prox1[m][mid] for m in MECHS}
     best_m = max(summary, key=summary.get)
-    st.write(f"Dominant mechanism near P/P0 = {relP[mid]:.2f}: {best_m}")
+    st.write(f"Dominant mechanism near P/P0 = {relP[mid]:.2f}: **{best_m}**")
