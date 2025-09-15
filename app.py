@@ -304,9 +304,6 @@ with colB:
     leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
     st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
-    st.subheader("Permeance (SI)")
-    fig1, ax1 = plt.subplots(figsize=(9,3))
-
     # --- Permeance (SI) + Legend in GPU ---
     st.subheader("Permeance (SI)")
     fig1, ax1 = plt.subplots(figsize=(9, 3))
@@ -320,7 +317,7 @@ with colB:
     ax1.plot(relP, Pi1, label=f"{gas1} ({gpu1:,.0f})")
     ax1.plot(relP, Pi2, '--', label=f"{gas2} ({gpu2:,.0f})")
 
-    ax1.set_ylabel(r"$\Pi$  (mol m$^{-2}$ s$^{-1}$ Pa$^{-1}$)")
+    ax1.set_ylabel(r"$\Pi$  (GPU)")
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax1.grid(True)
     
@@ -332,7 +329,7 @@ with colB:
     # --- Selectivity (그대로) ---
     st.subheader("Selectivity")
     fig2, ax2 = plt.subplots(figsize=(9, 3))
-    ax2.plot(relP, Sel, label=f"{gas1}/{gas2}")
+    ax2.plot(relP, Sel, label=f"{gpu1}/{gpu2}")
     ax2.set_ylabel("Selectivity (–)")
     ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax2.grid(True); ax2.legend()
