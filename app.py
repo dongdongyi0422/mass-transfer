@@ -309,8 +309,8 @@ with colB:
 
     GPU = 3.35e-10  # 환산계수
 
-    ax1.plot(relP, Pi1, label=f"{gas1} (~{Pi1.max()*GPU:,.0f} GPU)")
-    ax1.plot(relP, Pi2, '--', label=f"{gas2} (~{Pi2.max()*GPU:,.0f} GPU)")
+    ax1.plot(relP, Pi1, label=f"{gas1} (~{Pi1.max()/GPU:,.0f} GPU)")
+    ax1.plot(relP, Pi2, '--', label=f"{gas2} (~{Pi2.max()/GPU:,.0f} GPU)")
 
     ax1.set_ylabel(r"$\Pi$  (mol m$^{-2}$ s$^{-1}$ Pa$^{-1}$)")
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
