@@ -332,7 +332,7 @@ with colB:
     ax2.plot(relP, Sel)
     ax2.set_ylabel("Selectivity (–)")
     ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-    ax2.grid(True); ax2.legend()
+    ax2.grid(True); 
     st.pyplot(fig2, use_container_width=True)
     plt.close(fig2)
 
