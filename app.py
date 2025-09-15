@@ -315,8 +315,8 @@ with colB:
     y2 = Pi2 / GPU
 
     # 2) 범례 라벨에 GPU 수치(최대값) 표시
-    ax1.plot(relP, y1, label=f"{gas1} ({y1.max():,.0f})")
-    ax1.plot(relP, y2, '--', label=f"{gas2} ({y2.max():,.0f})")
+    ax1.plot(relP, y1, label=f"{gas1}")
+    ax1.plot(relP, y2, '--', label=f"{gas2}")
 
     # 3) y축 라벨을 GPU로 (이제 데이터와 일치)
     ax1.set_ylabel(r"$\Pi$  (GPU)")
