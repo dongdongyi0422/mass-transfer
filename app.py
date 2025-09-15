@@ -1,7 +1,9 @@
 # app.py
 # Streamlit web app: Permeance in SI (mol m^-2 s^-1 Pa^-1), Selectivity, Mechanism band
-# + "슬라이더 + 숫자입력 + − / ＋ 버튼" 동기화 (widget key에 직접 대입 금지)
-# + 숫자 입력칸 확대, - / + 사이 간격(spacer) 추가, ＋ 표시 확실히 보이게 처리
+# - 2-Row nudged slider (겹침 방지): Row1 Slider / Row2 [Number][Spacer][-][+]
+# - 숫자입력은 소수점 3자리 표시
+# - - / + 버튼 간격 확보, + 아이콘 명확 표시
+# - classify_mechanism: 0.30 nm 이하는 Solution로 처리(<=), 유효구경 오프셋 제거
 
 import numpy as np
 import matplotlib
@@ -21,7 +23,10 @@ E_D_SOL = 1.8e4   # J/mol   (solution diffusion activation)
 K_CAP   = 1e-7    # (mol m^-1.5 s^-1 Pa^-1) capillary proxy scale
 E_SIEVE = 9.0e3   # J/mol   (near-threshold sieving barrier)
 PI_TINY = 1e-14   # mol m^-2 s^-1 Pa^-1 (numerical floor instead of perfect zero)
-SOL_TH_NM = 0.30  # nm: solution-diffusion favored below this pore size
+SOL_TH_NM = 0.30  # nm: solution-diffusion favored at/under this pore size (<=)
+
+# (선택) 체거름 전이 완충대 [Å] — 너무 날카로운 경계를 완화
+SIEVE_BAND_A = 0.15
 
 # ---------------------------- Gas parameters ----------------------------
 # M [kg/mol], kinetic diameter d [Å], surface Ea_s [J/mol]
@@ -38,10 +43,8 @@ PARAMS = {
     "C3H8":{"M":44.097e-3, "d":4.30, "Ea_s":1.05e4},
 }
 
-# ---------------------------- UI helper: slider + number + − / ＋ ----------------------------
-def nudged_slider(
-    label, vmin, vmax, vstep, vinit, key, unit="", decimals=3
-):
+# ---------------------------- UI helper: slider + number + − / + ----------------------------
+def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3):
     """
     2-Row UI:
       Row1: [ Slider (full width) ]
@@ -58,8 +61,7 @@ def nudged_slider(
     fmt = f"%.{int(decimals)}f"
 
     # -------- Row 1: slider (겹침 방지 위해 단독 행) --------
-    sld_container = st.container()
-    sld_val = sld_container.slider(
+    sld_val = st.slider(
         lab,
         min_value=float(vmin),
         max_value=float(vmax),
@@ -69,8 +71,7 @@ def nudged_slider(
     )
 
     # -------- Row 2: number + spacer + - + --------
-    row = st.container()
-    c_num, c_sp, c_minus, c_plus = row.columns([0.72, 0.08, 0.10, 0.10], gap="small")
+    c_num, c_sp, c_minus, c_plus = st.columns([0.70, 0.10, 0.10, 0.10], gap="small")
 
     num_val = c_num.number_input(
         "",
@@ -81,11 +82,10 @@ def nudged_slider(
         format=fmt,
         key=f"{key}_num_view",
     )
-    # spacer는 비워서 간격만 확보
-    with c_sp:
-        st.write("")
 
-    # 버튼은 전각 기호 안 써도 되게 별도 행에서 공간 확보
+    with c_sp:
+        st.write("")  # spacer
+
     minus = c_minus.button("-", key=f"{key}_minus", help=f"-{vstep:g}")
     plus  = c_plus.button("+", key=f"{key}_plus",  help=f"+{vstep:g}")
 
@@ -105,7 +105,6 @@ def nudged_slider(
         st.session_state[key] = new_val
 
     return st.session_state[key]
-
 
 # ---------------------------- DSL adsorption ----------------------------
 def dsl_loading_and_slope(gas, T, P_bar, relP_vec, q1_mmolg, q2_mmolg, Qst1_kJ, Qst2_kJ):
@@ -152,17 +151,31 @@ def mean_free_path_nm(T, P_bar, d_ang):
     return (kB*T/(np.sqrt(2)*np.pi*d*d*P))*1e9
 
 def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
-    if pore_d_nm < SOL_TH_NM:
+    # 0) 용액-확산: 임계값 "이하"는 Solution
+    if pore_d_nm <= SOL_TH_NM:
         return "Solution"
+
     d1, d2 = PARAMS[gas1]["d"], PARAMS[gas2]["d"]
     lam = mean_free_path_nm(T, P_bar, 0.5*(d1+d2))
+
+    # 1) 응축/모세관
     if pore_d_nm >= 2.0 and rp > 0.5:
         return "Capillary"
+
+    # 2) 2 nm 이하: 체거름/차단 — 유효구경을 Å로 환산 (오프셋 제거)
     if pore_d_nm <= 2.0:
-        p_eff_A = pore_d_nm*10.0 + 0.8
-        return "Blocked" if p_eff_A <= min(d1,d2) else "Sieving"
+        p_eff_A = pore_d_nm * 10.0  # nm -> Å
+        dmin = min(d1, d2)
+        if p_eff_A <= dmin - SIEVE_BAND_A:
+            return "Blocked"
+        # dmin ± band 영역은 Sieving으로 간주 (경계 완충)
+        return "Sieving"
+
+    # 3) 자유분자(크누센)
     if pore_d_nm < 0.5*lam:
         return "Knudsen"
+
+    # 4) 표면 확산 지배
     return "Surface"
 
 def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
@@ -173,8 +186,8 @@ def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
 
 def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
     dA = PARAMS[gas]["d"] # Å
-    pA = pore_d_nm*10.0 + 0.8
-    if pA <= dA:
+    pA = pore_d_nm*10.0   # nm->Å (오프셋 제거)
+    if pA <= dA - SIEVE_BAND_A:
         return PI_TINY
     x = max(1.0 - (dA/pA)**2, 0.0)
     f_open = x**2
@@ -242,7 +255,7 @@ with st.sidebar:
     gas2 = st.selectbox("Gas2 (denominator)", gases, index=gases.index("C3H8"))
 
     st.header("DSL parameters (double-site, each gas)")
-    st.caption("Qst: 0–100 kJ/mol, q: 0–5 mmol/g")
+    st.caption("Qst: 0–100 kJ/mol, q: 0–5 mmol/g  (숫자 입력은 소수 3자리)")
 
     st.subheader("Gas1")
     Q11 = nudged_slider("Qst1 Gas1", 0.0, 100.0, 0.1, 27.0, key="Q11", unit="kJ/mol")
