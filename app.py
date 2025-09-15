@@ -223,7 +223,7 @@ with right:
     ax1.plot(relP, perm1, label=f"Permeance {gas1}")
     ax1.plot(relP, perm2, "--", label=f"Permeance {gas2}")
     ax1.set_xlabel("Relative pressure (P/P0)")
-    ax1.set_ylabel("Permeance (mol*m⁻2*s⁻1*Pa⁻1)")
+    ax1.set_ylabel("Permeance (mol*m^(⁻2)*s^(⁻1)*Pa^(⁻1))")
     ax1.grid(True); ax1.legend()
     st.pyplot(fig1); plt.close(fig1)
 
