@@ -314,8 +314,8 @@ with colB:
     gpu1 = Pi1.max() / GPU
     gpu2 = Pi2.max() / GPU
 
-    ax1.plot(relP, Pi1, label=f"{gas1} ({gpu1:,.0f})")
-    ax1.plot(relP, Pi2, '--', label=f"{gas2} ({gpu2:,.0f})")
+    ax1.plot(relP, Pi1, label=f"{gas1} ({gpu1})")
+    ax1.plot(relP, Pi2, '--', label=f"{gas2} ({gpu2})")
 
     ax1.set_ylabel(r"$\Pi$  (GPU)")
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
@@ -329,7 +329,7 @@ with colB:
     # --- Selectivity (그대로) ---
     st.subheader("Selectivity")
     fig2, ax2 = plt.subplots(figsize=(9, 3))
-    ax2.plot(relP, Sel, label=f"{gpu1}/{gpu2}")
+    ax2.plot(relP, Sel)
     ax2.set_ylabel("Selectivity (–)")
     ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax2.grid(True); ax2.legend()
