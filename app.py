@@ -1,9 +1,8 @@
 # app.py
-# Streamlit web app: Permeance in SI (mol m^-2 s^-1 Pa^-1), Selectivity, Mechanism band
-# - 2-Row nudged slider (겹침 방지): Row1 Slider / Row2 [Number][Spacer][-][+]
-# - 숫자입력은 소수점 3자리 표시
-# - - / + 버튼 간격 확보, + 아이콘 명확 표시
-# - classify_mechanism: 0.30 nm 이하는 Solution로 처리(<=), 유효구경 오프셋 제거
+# Membrane Transport Simulator (SI units)
+# - DSL: b1,b2 직접 입력 (Qst 불필요)
+# - Sidebar 입력: 2-Row (Slider / NumberInput), 버튼(−/＋) 제거 → "네모 칸" 없음
+# - Permeance 플롯: 범례 제목 "Permeance (GPU)", 데이터는 GPU로 환산하여 표시
 
 import numpy as np
 import matplotlib
@@ -22,11 +21,12 @@ D0_SOL  = 1e-10   # m^2/s   (solution diffusion scale)
 E_D_SOL = 1.8e4   # J/mol   (solution diffusion activation)
 K_CAP   = 1e-7    # (mol m^-1.5 s^-1 Pa^-1) capillary proxy scale
 E_SIEVE = 9.0e3   # J/mol   (near-threshold sieving barrier)
-PI_TINY = 1e-14   # mol m^-2 s^-1 Pa^-1 (numerical floor instead of perfect zero)
+PI_TINY = 1e-14   # mol m^-2 s^-1 Pa^-1 (numerical floor)
 SOL_TH_NM = 0.30  # nm: solution-diffusion favored at/under this pore size (<=)
 
-# (선택) 체거름 전이 완충대 [Å] — 너무 날카로운 경계를 완화
+# 체거름 경계 완충대 / Knudsen 여유폭(Å)
 SIEVE_BAND_A = 0.15
+DELTA_A      = 0.4
 
 # ---------------------------- Gas parameters ----------------------------
 # M [kg/mol], kinetic diameter d [Å], surface Ea_s [J/mol]
@@ -43,15 +43,14 @@ PARAMS = {
     "C3H8":{"M":44.097e-3, "d":4.30, "Ea_s":1.05e4},
 }
 
-# ---------------------------- UI helper: slider + number + − / + ----------------------------
+# ---------------------------- UI helper: Slider + Number (no buttons) ----------------------------
 def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3):
     """
     2-Row UI:
       Row1: [ Slider (full width) ]
-      Row2: [ NumberInput (wide) ][ spacer ][ − ][ + ]
-    - st.session_state[key] 하나만 '캐논' 값으로 유지
-    - view 위젯은 *_view 키만 사용 (직접 대입 금지)
-    - decimals: 숫자 입력 표시 자릿수 (기본 3)
+      Row2: [ NumberInput (wide) ]
+    - st.session_state[key] 하나만 '캐논' 값 유지
+    - 버튼 제거 → 사이드바에 빈 네모 칸 생기지 않음
     """
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
@@ -60,7 +59,7 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3):
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
     fmt = f"%.{int(decimals)}f"
 
-    # -------- Row 1: slider (겹침 방지 위해 단독 행) --------
+    # Row1: Slider
     sld_val = st.slider(
         lab,
         min_value=float(vmin),
@@ -70,10 +69,8 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3):
         key=f"{key}_sld_view",
     )
 
-    # -------- Row 2: number + spacer + - + --------
-    c_num, c_sp, c_minus, c_plus = st.columns([0.70, 0.10, 0.10, 0.10], gap="small")
-
-    num_val = c_num.number_input(
+    # Row2: Number
+    num_val = st.number_input(
         "",
         min_value=float(vmin),
         max_value=float(vmax),
@@ -83,40 +80,29 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3):
         key=f"{key}_num_view",
     )
 
-    with c_sp:
-        st.write("")  # spacer
-
-    minus = c_minus.button("-", key=f"{key}_minus", help=f"-{vstep:g}")
-    plus  = c_plus.button("+", key=f"{key}_plus",  help=f"+{vstep:g}")
-
-    # 변경 우선순위: 버튼 > 숫자입력 > 슬라이더
-    new_val = cur
-    if minus:
-        new_val = max(vmin, cur - vstep)
-    elif plus:
-        new_val = min(vmax, cur + vstep)
-    elif num_val != cur:
-        new_val = float(num_val)
-    elif sld_val != cur:
-        new_val = float(sld_val)
-
+    # 변경 우선순위: 숫자입력 > 슬라이더
+    new_val = float(num_val) if num_val != cur else float(sld_val)
     new_val = float(np.clip(new_val, vmin, vmax))
     if new_val != cur:
         st.session_state[key] = new_val
 
     return st.session_state[key]
 
-# ---------------------------- DSL adsorption ----------------------------
-def dsl_loading_and_slope(gas, T, P_bar, relP_vec, q1_mmolg, q2_mmolg, Qst1_kJ, Qst2_kJ):
+# ---------------------------- DSL adsorption (b1,b2 direct) ----------------------------
+def dsl_loading_and_slope_b(
+    gas, T, P_bar, relP_vec,
+    q1_mmolg, q2_mmolg,
+    b1, b2
+):
     """
+    Double-site Langmuir using (q1,q2,b1,b2).
     Returns:
-      q_vec   [mmol/g]
-      dqdp    [mol/kg/Pa]  (slope wrt pressure)
+      q_vec [mmol/g]
+      dqdp  [mol/kg/Pa]
     """
     P0 = P_bar * 1e5  # Pa
-    b0 = 1e-4
-    b1 = b0 * np.exp(max(Qst1_kJ,0.0)*1e3/(R*T))
-    b2 = b0 * np.exp(max(Qst2_kJ,0.0)*1e3/(R*T))
+    b1_T = max(float(b1), 0.0)
+    b2_T = max(float(b2), 0.0)
 
     q_vec  = np.zeros_like(relP_vec, float)
     dqdp_MK = np.zeros_like(relP_vec, float)  # mol/kg/Pa
@@ -126,12 +112,12 @@ def dsl_loading_and_slope(gas, T, P_bar, relP_vec, q1_mmolg, q2_mmolg, Qst1_kJ, 
 
     for i, rp in enumerate(relP_vec):
         P = max(rp, 1e-9) * P0
-        th1 = (b1*P)/(1.0 + b1*P)
-        th2 = (b2*P)/(1.0 + b2*P)
+        th1 = (b1_T*P)/(1.0 + b1_T*P)
+        th2 = (b2_T*P)/(1.0 + b2_T*P)
         q_molkg = q1_molkg*th1 + q2_molkg*th2
         q_vec[i] = q_molkg / 1e3  # -> mmol/g
 
-        dqdp_MK[i] = (q1_molkg * b1)/(1.0 + b1*P)**2 + (q2_molkg * b2)/(1.0 + b2*P)**2
+        dqdp_MK[i] = (q1_molkg * b1_T)/(1.0 + b1_T*P)**2 + (q2_molkg * b2_T)/(1.0 + b2_T*P)**2
 
     return q_vec, dqdp_MK
 
@@ -150,67 +136,60 @@ def mean_free_path_nm(T, P_bar, d_ang):
     kB = 1.380649e-23; P = P_bar*1e5; d = d_ang*1e-10
     return (kB*T/(np.sqrt(2)*np.pi*d*d*P))*1e9
 
-# 상단 상수 (원래 값 쓰되, 필요시 조정)
-SIEVE_BAND_A = 0.15   # [Å] 차단/체거름 경계 완충
-DELTA_A      = 0.4    # [Å] Knudsen로 보기 위한 분자 대비 여유 폭
-SOL_TH_NM    = 0.30   # [nm] 용액-확산 우세 임계
-
 def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
     d1, d2 = PARAMS[gas1]["d"], PARAMS[gas2]["d"]  # [Å]
     dmin = min(d1, d2)
-    p_eff_A = pore_d_nm * 10.0                     # [Å] (nm→Å)
+    p_eff_A = pore_d_nm * 10.0                     # [Å]
     lam = mean_free_path_nm(T, P_bar, 0.5*(d1+d2)) # [nm]
 
-    # 0) **기하학적 차단이 최우선**
+    # 0) 기하학적 차단 최우선
     if p_eff_A <= dmin - SIEVE_BAND_A:
         return "Blocked"
 
-    # 1) 매우 작은 기공은 용액-확산(단, 위에서 이미 막히지 않은 경우에만)
+    # 1) 매우 작은 기공은 용액-확산
     if pore_d_nm <= SOL_TH_NM:
         return "Solution"
 
-    # 2) 자유분자(벽-충돌 지배): 분자보다 충분히 여유 + pore << λ
+    # 2) Knudsen: 분자보다 충분히 여유 + pore << λ
     if (p_eff_A >= dmin + DELTA_A) and (pore_d_nm < 0.5 * lam):
         return "Knudsen"
 
-    # 3) 큰 기공 + 높은 상대압에서는 모세관
+    # 3) 큰 기공 + 높은 상대압 → 모세관
     if pore_d_nm >= 2.0 and rp > 0.5:
         return "Capillary"
 
-    # 4) 분자 직경에 근접한 초미세 구경은 체거름
+    # 4) 분자 직경 근방 → 체거름
     if p_eff_A <= dmin + SIEVE_BAND_A:
         return "Sieving"
 
-    # 5) 그 외는 표면 확산 지배
+    # 5) 그 외 → 표면 확산
     return "Surface"
-
-
 
 def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
     r = max(pore_d_nm*1e-9/2.0, 1e-12)
-    Dk = (2.0/3.0) * r * np.sqrt((8.0*R*T)/(np.pi*M))      # [m^2/s]
-    Pi = Dk / (L_m * R * T)                                # [mol m^-2 s^-1 Pa^-1]
+    Dk = (2.0/3.0) * r * np.sqrt((8.0*R*T)/(np.pi*M))
+    Pi = Dk / (L_m * R * T)
     return Pi
 
 def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
-    dA = PARAMS[gas]["d"] # Å
-    pA = pore_d_nm*10.0   # nm->Å (오프셋 제거)
+    dA = PARAMS[gas]["d"]
+    pA = pore_d_nm*10.0
     if pA <= dA - SIEVE_BAND_A:
         return PI_TINY
     x = max(1.0 - (dA/pA)**2, 0.0)
     f_open = x**2
-    Pi_ref = 5e-9  # baseline [mol m^-2 s^-1 Pa^-1]
+    Pi_ref = 5e-9
     Pi = Pi_ref * f_open * np.exp(-E_SIEVE/(R*T))
     return max(Pi, PI_TINY)
 
 def pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa):
     Ds = D0_SURF * np.exp(-PARAMS[gas]["Ea_s"]/(R*T))
-    Pi = (Ds / L_m) * (dqdp_molkgPa * RHO_EFF)             # [mol m^-2 s^-1 Pa^-1]
+    Pi = (Ds / L_m) * (dqdp_molkgPa * RHO_EFF)
     return max(Pi, 0.0)
 
 def pintr_capillary_SI(pore_d_nm, rp, L_m):
     r_m = max(pore_d_nm*1e-9/2.0, 1e-12)
-    thresh = np.exp(-120.0/( (pore_d_nm/2.0)*rp*300.0 + 1e-12 ))  # heuristic threshold
+    thresh = np.exp(-120.0/( (pore_d_nm/2.0)*rp*300.0 + 1e-12 ))
     if rp <= thresh:
         return 0.0
     return K_CAP * np.sqrt(r_m) / L_m
@@ -262,26 +241,26 @@ with st.sidebar:
     gas1 = st.selectbox("Gas1 (numerator)", gases, index=gases.index("C3H6"))
     gas2 = st.selectbox("Gas2 (denominator)", gases, index=gases.index("C3H8"))
 
-    st.header("DSL parameters (double-site, each gas)")
-    st.caption("Qst: 0–100 kJ/mol, q: 0–5 mmol/g  (숫자 입력은 소수 3자리)")
+    st.header("DSL parameters (double-site, use b directly)")
+    st.caption("q: 0–5 mmol/g, b: 1e-8 ~ 1e-2 Pa⁻¹ (예시 범위)")
 
     st.subheader("Gas1")
-    Q11 = nudged_slider("Qst1 Gas1", 0.0, 100.0, 0.1, 27.0, key="Q11", unit="kJ/mol")
-    Q12 = nudged_slider("Qst2 Gas1", 0.0, 100.0, 0.1, 18.0, key="Q12", unit="kJ/mol")
     q11 = nudged_slider("q1 Gas1",   0.0, 5.0,    0.01, 0.70, key="q11", unit="mmol/g")
     q12 = nudged_slider("q2 Gas1",   0.0, 5.0,    0.01, 0.30, key="q12", unit="mmol/g")
+    b11 = nudged_slider("b1 Gas1",   1e-8, 1e-2,  1e-8, 1e-5, key="b11", unit="Pa⁻¹", decimals=8)
+    b12 = nudged_slider("b2 Gas1",   1e-8, 1e-2,  1e-8, 5e-6, key="b12", unit="Pa⁻¹", decimals=8)
 
     st.subheader("Gas2")
-    Q21 = nudged_slider("Qst1 Gas2", 0.0, 100.0, 0.1, 26.5, key="Q21", unit="kJ/mol")
-    Q22 = nudged_slider("Qst2 Gas2", 0.0, 100.0, 0.1, 17.0, key="Q22", unit="kJ/mol")
     q21 = nudged_slider("q1 Gas2",   0.0, 5.0,    0.01, 0.70, key="q21", unit="mmol/g")
     q22 = nudged_slider("q2 Gas2",   0.0, 5.0,    0.01, 0.30, key="q22", unit="mmol/g")
+    b21 = nudged_slider("b1 Gas2",   1e-8, 1e-2,  1e-8, 1e-5, key="b21", unit="Pa⁻¹", decimals=8)
+    b22 = nudged_slider("b2 Gas2",   1e-8, 1e-2,  1e-8, 5e-6, key="b22", unit="Pa⁻¹", decimals=8)
 
 # ---------------------------- Compute ----------------------------
 relP = np.linspace(0.01, 0.99, 500)
 
-q1_mmolg, dqdp1 = dsl_loading_and_slope(gas1, T, Pbar, relP, q11, q12, Q11, Q12)
-q2_mmolg, dqdp2 = dsl_loading_and_slope(gas2, T, Pbar, relP, q21, q22, Q21, Q22)
+q1_mmolg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
+q2_mmolg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
 
 Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mmolg, dqdp1, q2_mmolg)
 Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mmolg, dqdp2, q1_mmolg)
@@ -305,40 +284,29 @@ with colB:
     st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
     # --- Permeance (GPU) ---
-    st.subheader("Permeance (SI)")
-    fig1, ax1 = plt.subplots(figsize=(9, 3))
+    st.subheader("Permeance (GPU)")
+    fig1, ax1 = plt.subplots(figsize=(9,3))
 
     GPU = 3.35e-10  # 1 GPU = 3.35×10^-10 mol m^-2 s^-1 Pa^-1
-
-    # 1) 데이터 자체를 GPU로 환산
     y1 = Pi1 / GPU
     y2 = Pi2 / GPU
 
-    # 2) 범례 라벨에 GPU 수치(최대값) 표시
-    ax1.plot(relP, y1, label=f"{gas1}")
-    ax1.plot(relP, y2, '--', label=f"{gas2}")
+    ax1.plot(relP, y1, label=f"{gas1} ({y1.max():,.0f})")
+    ax1.plot(relP, y2, '--', label=f"{gas2} ({y2.max():,.0f})")
 
-    # 3) y축 라벨을 GPU로 (이제 데이터와 일치)
     ax1.set_ylabel(r"$\Pi$  (GPU)")
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax1.grid(True)
-
-    # 4) 범례 제목
     ax1.legend(title="Permeance (GPU)")
+    st.pyplot(fig1, use_container_width=True); plt.close(fig1)
 
-    st.pyplot(fig1, use_container_width=True)
-    plt.close(fig1)
-
-    # --- Selectivity (그대로) ---
     st.subheader("Selectivity")
-    fig2, ax2 = plt.subplots(figsize=(9, 3))
-    ax2.plot(relP, Sel)
+    fig2, ax2 = plt.subplots(figsize=(9,3))
+    ax2.plot(relP, Sel, label=f"{gas1}/{gas2}")
     ax2.set_ylabel("Selectivity (–)")
     ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-    ax2.grid(True); 
-    st.pyplot(fig2, use_container_width=True)
-    plt.close(fig2)
-
+    ax2.grid(True); ax2.legend()
+    st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
 with colA:
     st.subheader("Mechanism (rule) vs intrinsic (Gas1)")
@@ -368,7 +336,7 @@ with colA:
 
 st.markdown("---")
 st.caption(
-    "All permeance values in SI: mol·m⁻²·s⁻¹·Pa⁻¹. "
-    "Capillary/Sieving are calibrated proxies for visualization. "
-    "Surface/Solution terms use DSL slope (∂q/∂p) converted by ρ_eff."
+    "Permeance in SI is converted to GPU for visualization. "
+    "Capillary/Sieving are calibrated proxies. "
+    "Surface/Solution terms use DSL slope (∂q/∂p) via ρ_eff."
 )
