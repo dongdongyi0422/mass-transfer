@@ -156,7 +156,7 @@ def synced_control(label, minv, maxv, val, step, key, host=None):
 
 # ---------------- UI ----------------
 st.set_page_config(page_title="Membrane mechanisms — softmax", layout="wide")
-st.title("Membrane Transport Mechanisms — softmax competition (D₂ 포함)")
+st.title("Membrane Transport Mechanisms")
 
 left, right = st.columns([6.8, 7], gap="large")
 
