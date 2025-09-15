@@ -151,32 +151,41 @@ def mean_free_path_nm(T, P_bar, d_ang):
     return (kB*T/(np.sqrt(2)*np.pi*d*d*P))*1e9
 
 def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
-    # 0) 용액-확산: 임계값 "이하"는 Solution
+    """
+    분류 우선순위(수정됨):
+      0) Solution (≤ SOL_TH_NM)
+      1) Knudsen: 구경이 분자보다 충분히 여유(DELTA_A) 있고, pore << λ
+      2) Capillary: 큰 기공(≥2 nm) + 높은 상대압
+      3) Blocked / Sieving: 분자 직경에 근접한 초미세 구경
+      4) Surface: 그 외
+    """
+    # 0) 용액-확산: 임계값 이하는 무조건 Solution
     if pore_d_nm <= SOL_TH_NM:
         return "Solution"
 
-    d1, d2 = PARAMS[gas1]["d"], PARAMS[gas2]["d"]
-    lam = mean_free_path_nm(T, P_bar, 0.5*(d1+d2))
+    # 기본 파라미터
+    d1, d2 = PARAMS[gas1]["d"], PARAMS[gas2]["d"]  # Å
+    dmin = min(d1, d2)
+    lam = mean_free_path_nm(T, P_bar, 0.5*(d1+d2))  # nm
+    p_eff_A = pore_d_nm * 10.0  # nm → Å
 
-    # 1) 응축/모세관
+    # 1) Knudsen: 분자보다 충분히 여유 있고(활성 장벽 거의 없음), pore << λ
+    if (p_eff_A >= dmin + DELTA_A) and (pore_d_nm < 0.5 * lam):
+        return "Knudsen"
+
+    # 2) Capillary: 큰 기공 + 높은 상대압
     if pore_d_nm >= 2.0 and rp > 0.5:
         return "Capillary"
 
-    # 2) 2 nm 이하: 체거름/차단 — 유효구경을 Å로 환산 (오프셋 제거)
-    if pore_d_nm <= 2.0:
-        p_eff_A = pore_d_nm * 10.0  # nm -> Å
-        dmin = min(d1, d2)
-        if p_eff_A <= dmin - SIEVE_BAND_A:
-            return "Blocked"
-        # dmin ± band 영역은 Sieving으로 간주 (경계 완충)
+    # 3) 분자체(차단/체거름): 분자 직경에 근접
+    if p_eff_A <= dmin - SIEVE_BAND_A:
+        return "Blocked"
+    if p_eff_A <= dmin + SIEVE_BAND_A:
         return "Sieving"
-
-    # 3) 자유분자(크누센)
-    if pore_d_nm < 0.5*lam:
-        return "Knudsen"
 
     # 4) 표면 확산 지배
     return "Surface"
+
 
 def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
     r = max(pore_d_nm*1e-9/2.0, 1e-12)
@@ -268,6 +277,11 @@ with st.sidebar:
     Q22 = nudged_slider("Qst2 Gas2", 0.0, 100.0, 0.1, 17.0, key="Q22", unit="kJ/mol")
     q21 = nudged_slider("q1 Gas2",   0.0, 5.0,    0.01, 0.70, key="q21", unit="mmol/g")
     q22 = nudged_slider("q2 Gas2",   0.0, 5.0,    0.01, 0.30, key="q22", unit="mmol/g")
+
+# (선택) 체거름 경계 완충대 [Å]
+SIEVE_BAND_A = 0.15
+# Knudsen로 보기 위해 분자 직경보다 필요한 여유 폭 [Å]
+DELTA_A = 0.4    # 0.4~0.6 사이에서 조절 가능; 0.4면 0.34 nm에서 H2/D2가 Knudsen로 잘 떨어짐
 
 # ---------------------------- Compute ----------------------------
 relP = np.linspace(0.01, 0.99, 500)
