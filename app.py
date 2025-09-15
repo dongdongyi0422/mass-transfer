@@ -362,6 +362,13 @@ with colB:
     ax1.plot(relP, y2, '--', label=f"{gas2}")
 
     ax1.set_ylabel(r"$\Pi$  (GPU)")
+
+    # y축에서 1e6 같은 오프셋 표기 제거
+    from matplotlib.ticker import ScalarFormatter
+    ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
+    ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+    ax1.get_yaxis().get_offset_text().set_visible(False)
+
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax1.grid(True)
     ax1.legend(title="Permeance (GPU)")
@@ -371,6 +378,10 @@ with colB:
     fig2, ax2 = plt.subplots(figsize=(9,3))
     ax2.plot(relP, Sel, label=f"{gas1}/{gas2}")
     ax2.set_ylabel("Selectivity (–)")
+    ax2.ticklabel_format(axis='y', style='plain', useOffset=False)
+    ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+    ax2.get_yaxis().get_offset_text().set_visible(False)
+
     ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax2.grid(True); ax2.legend()
     st.pyplot(fig2, use_container_width=True); plt.close(fig2)
