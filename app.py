@@ -1,6 +1,6 @@
 # app.py
 # Streamlit web app: Permeance in SI (mol m^-2 s^-1 Pa^-1), Selectivity, Mechanism band
-# + 모든 주요 파라미터에 "슬라이더 + 숫자입력 + −/+ 버튼" 인터페이스 추가
+# + "슬라이더 + 숫자입력 + −/+ 버튼" 동기화 (widget key에 직접 대입 금지)
 
 import numpy as np
 import matplotlib
@@ -42,50 +42,46 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit=""):
     """
     Composite widget:
       [ Slider ][ NumberInput ][ - ][ + ]
-    Keeps all synced via session_state. Returns current float value.
+    - 위젯 키는 건드리지 않고, st.session_state[key] 하나만 '캐논' 값으로 유지
+    - 모든 위젯의 value=... 에 이 캐논값을 전달
     """
-    # init canonical value
+    # 캐논값 초기화
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
 
-    # layout
     c1, c2, c3, c4 = st.columns([0.65, 0.20, 0.075, 0.075])
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
 
-    # draw controls with their own keys
-    sld = c1.slider(lab, min_value=float(vmin), max_value=float(vmax),
-                    value=float(st.session_state[key]), step=float(vstep),
-                    key=f"{key}_sld")
-    num = c2.number_input("", min_value=float(vmin), max_value=float(vmax),
-                          value=float(st.session_state[key]), step=float(vstep),
-                          format="%.6f", key=f"{key}_num")
+    # 현재 캐논값
+    cur = float(st.session_state[key])
 
-    # nudge buttons
+    # 위젯 그리기 (value=cur 로 주입)
+    sld_val = c1.slider(lab, min_value=float(vmin), max_value=float(vmax),
+                        value=cur, step=float(vstep), key=f"{key}_sld_view")
+    num_val = c2.number_input("", min_value=float(vmin), max_value=float(vmax),
+                              value=cur, step=float(vstep),
+                              format="%.6f", key=f"{key}_num_view")
+
     minus = c3.button("−", key=f"{key}_minus")
     plus  = c4.button("+", key=f"{key}_plus")
 
-    # reconcile inputs
-    val = st.session_state[key]
-    # slider change wins
-    if sld != val:
-        val = float(sld)
-    # number change wins (if different from current)
-    elif num != val:
-        val = float(num)
-    # button nudges
+    # 변경 우선순위: 버튼 > 숫자입력 > 슬라이더
+    new_val = cur
     if minus:
-        val = max(float(vmin), float(val) - float(vstep))
-    if plus:
-        val = min(float(vmax), float(val) + float(vstep))
+        new_val = max(vmin, cur - vstep)
+    elif plus:
+        new_val = min(vmax, cur + vstep)
+    elif num_val != cur:
+        new_val = float(num_val)
+    elif sld_val != cur:
+        new_val = float(sld_val)
 
-    # clamp & store canonical
-    val = float(np.clip(val, vmin, vmax))
-    st.session_state[key] = val
-    # reflect to both widgets to keep in sync
-    st.session_state[f"{key}_sld"] = val
-    st.session_state[f"{key}_num"] = val
+    new_val = float(np.clip(new_val, vmin, vmax))
+    # 캐논 값만 업데이트 (위젯 키는 건드리지 않음)
+    if new_val != cur:
+        st.session_state[key] = new_val
 
-    return val
+    return st.session_state[key]
 
 # ---------------------------- DSL adsorption ----------------------------
 def dsl_loading_and_slope(gas, T, P_bar, relP_vec, q1_mmolg, q2_mmolg, Qst1_kJ, Qst2_kJ):
