@@ -219,54 +219,39 @@ with right:
     mech_names = pick_mechanism_from_proxies(prox1)
 
     # ---- Mechanism band (여백/배치 수정: 겹침 방지) ----
-    rgba = np.array([to_rgba(MCOLOR[m]) for m in mech_names])[None, :, :]
-    figB, axB = plt.subplots(figsize=(8, 1.7))  # 높이 약간 키움
-    axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
-    axB.set_yticks([]); axB.set_xlim(0, 1)
-    axB.set_xlabel(r"Relative pressure, $P/P_0$ (–)", labelpad=16)  # 라벨 아래로 내림
-    axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+# ---- Mechanism band (legend을 별도 그림으로 분리) ----
+rgba = np.array([to_rgba(MCOLOR[m]) for m in mech_names])[None, :, :]
 
-    handles = [plt.Rectangle((0,0),1,1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
-    # 하단 여백을 넉넉히 확보
-    plt.subplots_adjust(bottom=0.62)
-    leg = axB.legend(
-        handles=handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.45),  # 더 아래로
-        ncol=6,
-        frameon=True,
-        borderpad=0.7,
-        handlelength=1.6,
-        columnspacing=1.2,
-    )
-    leg.get_frame().set_alpha(0.95); leg.get_frame().set_facecolor("white")
-    st.pyplot(figB); plt.close(figB)
+# 1) 밴드만 렌더링 (범례 없음)
+figB, axB = plt.subplots(figsize=(8, 1.4))
+axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
+axB.set_yticks([]); axB.set_xlim(0, 1)
+axB.set_xlabel(r"Relative pressure, $P/P_0$ (–)", labelpad=10)
+axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+plt.tight_layout()            # 밴드 자체는 깔끔히 맞춤
+st.pyplot(figB)
+plt.close(figB)
 
-    # ---- Permeance & Selectivity ----
-    perm1 = permeance_from_proxies(prox1, load1, load2)
-    perm2 = permeance_from_proxies(prox2, load2, load1)
+# 2) 범례만 따로 렌더링 (캔버스에 축 없음 → 겹칠 일 없음)
+handles = [plt.Rectangle((0,0), 1, 1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
+leg_fig, leg_ax = plt.subplots(figsize=(8, 1.1))
+leg_ax.axis("off")
+leg = leg_fig.legend(
+    handles=handles,
+    loc="center",
+    ncol=6,
+    frameon=True,
+    borderpad=0.8,
+    handlelength=1.8,
+    columnspacing=1.4,
+)
+leg.get_frame().set_alpha(0.95)
+leg.get_frame().set_facecolor("white")
+plt.tight_layout()
+st.pyplot(leg_fig)
+plt.close(leg_fig)
 
-    # Blocked 구간에서 선택도/그래프 NaN 방지
-    denom = np.where(perm2 > 0, perm2, np.inf)
-    sel = perm1 / denom
-    sel = np.where(np.isfinite(sel), sel, 0.0)
-
-    fig1, ax1 = plt.subplots(figsize=(8,3))
-    ax1.plot(relP, perm1, label=f"Permeance {gas1}")
-    ax1.plot(relP, perm2, "--", label=f"Permeance {gas2}")
-    ax1.set_ylabel(r"$\Pi$ (arb. units)")
-    ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-    ax1.grid(True); ax1.legend()
-    st.pyplot(fig1); plt.close(fig1)
-
-    fig2, ax2 = plt.subplots(figsize=(8,3))
-    ax2.plot(relP, sel, label=f"Selectivity {gas1}/{gas2}")
-    ax2.set_ylabel("Selectivity (–)")
-    ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-    ax2.grid(True); ax2.legend()
-    st.pyplot(fig2); plt.close(fig2)
-
-    # ---- Text summary at mid-pressure ----
+       # ---- Text summary at mid-pressure ----
     mid = len(relP)//2
     summary = {m: prox1[m][mid] for m in MECHS}
     best_m = max(summary, key=summary.get)
