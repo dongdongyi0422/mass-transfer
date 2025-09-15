@@ -1,8 +1,8 @@
-# app.py — Membrane mechanism simulator (Streamlit, with slider+number box)
-# - 각 P/P0 지점에서 6가지(proxy) 중 최대값으로 지배 메커니즘 결정
-# - Double-site Langmuir(DSL) 흡착 → Surface/Solution에 반영
-# - Blocked 스칼라/배열 버그 FIX
-# - 모든 주요 파라미터에 "슬라이더 + 숫자 입력칸" UI 제공 (입력칸 값을 우선)
+# app.py — Membrane mechanism simulator (Streamlit)
+# - 슬라이더와 숫자입력칸 완전 동기화 (session_state + on_change)
+# - 각 P/P0 지점에서 6가지(proxy) 중 최대값으로 지배 메커니즘 결정 (룰 기반 X)
+# - DSL 흡착 → Surface / Solution 반영
+# - Blocked 구간은 밴드에 표시 + Permeance=0 + Selectivity 안전 처리
 
 import numpy as np
 import matplotlib
@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgba
 import streamlit as st
 
-# ----------------------------- Page config -----------------------------
+# ----------------------------- Page & theme -----------------------------
 st.set_page_config(page_title="Membrane Mechanisms Simulator", layout="wide")
 st.title("Membrane Transport Mechanisms – data-driven simulator")
 
@@ -19,10 +19,10 @@ st.title("Membrane Transport Mechanisms – data-driven simulator")
 R = 8.314  # J/mol/K
 FLEX_A = 0.8          # Å, pore flexibility 보정
 THICK_M = 100e-9      # 막 두께(임의 스케일) — permeance 산정 시 사용
-E_D_SOL = 1.8e4       # 용해-확산 확산활성화에너지(기본값, J/mol)
-E_D_SRF = 9.0e3       # 표면확산 활성화에너지(기본값, J/mol)
+E_D_SOL = 1.8e4       # 용해 확산 활성화에너지(기본값, J/mol)
+E_D_SRF = 9.0e3       # 표면 확산 활성화에너지(기본값, J/mol)
 
-# 대표 물성 (질량, 운동지름[Å], 모세관응축 감도 스케일)
+# 대표 물성 (질량, 운동지름[Å], 모세관 응축 감도 스케일)
 GASES = {
     "H2":  {"M": 2.016,  "d": 2.89, "cap": 0.10},
     "D2":  {"M": 4.028,  "d": 2.89, "cap": 0.10},
@@ -46,18 +46,55 @@ MCOLOR = {
     "Solution": "#6a3d9a",
 }
 
-# ----------------------------- Helper: slider + number box -------------
+# ----------------------------- Synced control ---------------------------
 def slider_with_box(label, minv, maxv, default, step, key):
     """
-    슬라이더 + 숫자입력칸을 나란히 배치. 숫자입력칸 값을 우선 적용.
-    float 전용(필요시 정수도 사용 가능). 반환: float
+    슬라이더 + 숫자입력칸 동기화:
+    - session_state[f"{key}_val"]를 단일 소스로 사용
+    - 두 위젯은 서로의 변경을 즉시 반영
     """
+    ss = st.session_state
+    vkey = f"{key}_val"
+    skey = f"{key}_slider"
+    bkey = f"{key}_box"
+
+    # 초기화
+    if vkey not in ss:
+        ss[vkey] = float(default)
+    if skey not in ss:
+        ss[skey] = float(default)
+    if bkey not in ss:
+        ss[bkey] = float(default)
+
+    def _sync_from_slider():
+        ss[vkey] = float(ss[skey])
+        ss[bkey] = float(ss[skey])
+
+    def _sync_from_box():
+        ss[vkey] = float(ss[bkey])
+        ss[skey] = float(ss[bkey])
+
     c1, c2 = st.columns([4, 1])
-    _ = c1.slider(label, min_value=float(minv), max_value=float(maxv),
-                  value=float(default), step=float(step), key=f"{key}_slider")
-    val = c2.number_input(" ", min_value=float(minv), max_value=float(maxv),
-                          value=float(_), step=float(step), key=f"{key}_box", label_visibility="collapsed")
-    return float(val)
+
+    c1.slider(
+        label,
+        min_value=float(minv), max_value=float(maxv),
+        value=float(ss[vkey]),
+        step=float(step),
+        key=skey,
+        on_change=_sync_from_slider,
+    )
+    c2.number_input(
+        " ",
+        min_value=float(minv), max_value=float(maxv),
+        value=float(ss[vkey]),
+        step=float(step),
+        key=bkey,
+        label_visibility="collapsed",
+        on_change=_sync_from_box,
+    )
+
+    return float(ss[vkey])
 
 # ----------------------------- Core models -----------------------------
 def dsl_loading_series(T, P_bar, relP, Q1_kJ, Q2_kJ, q1_mmolg, q2_mmolg, b0=1e-4):
@@ -129,9 +166,14 @@ def pick_mechanism_from_proxies(prox_dict):
     return np.array(MECHS)[idx]
 
 def permeance_from_proxies(prox_dict, loading_self, loading_other):
+    """
+    합성 permeance:
+    - (각 지점 최대 proxy) * 조성가중(DSL loading 비율) / 두께
+    - Blocked면 mask에 의해 최대값도 0 → Permeance=0
+    """
     arr = np.vstack([prox_dict[m] for m in MECHS])
-    max_proxy = arr.max(axis=0)
-    y = loading_self/(loading_self + loading_other + 1e-30)  # DSL loading 기반 가중
+    max_proxy = arr.max(axis=0)  # Blocked가 1이어도 다른 proxy는 0이므로, 결과 1 → mask 이전에 이미 적용됨
+    y = loading_self/(loading_self + loading_other + 1e-30)
     return (max_proxy * y) / THICK_M
 
 # ----------------------------- UI -----------------------------
@@ -149,7 +191,7 @@ with left:
     gas2 = st.selectbox("Gas 2 (denominator)", gases, index=gases.index("C3H8"))
 
     st.subheader("Double-site Langmuir parameters — Gas 1")
-    st.caption("Qst: 0–100 kJ/mol, q: 0–5 mmol/g (입력칸 값을 우선 적용)")
+    st.caption("Qst: 0–100 kJ/mol, q: 0–5 mmol/g  (슬라이더와 숫자칸 완전 동기화)")
     Q11 = slider_with_box("Qst1 (kJ/mol)", 0.0, 100.0, 27.0, 0.1,  key="g1_Q1")
     Q12 = slider_with_box("Qst2 (kJ/mol)", 0.0, 100.0, 18.0, 0.1,  key="g1_Q2")
     q11 = slider_with_box("q1 (mmol/g)",   0.0, 5.0,   0.70, 0.01, key="g1_q1")
@@ -177,14 +219,15 @@ with right:
 
     # ---- Mechanism band ----
     rgba = np.array([to_rgba(MCOLOR[m]) for m in mech_names])[None, :, :]
-    figB, axB = plt.subplots(figsize=(8, 1.1))
+    figB, axB = plt.subplots(figsize=(8, 1.15))
     axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
     axB.set_yticks([]); axB.set_xlim(0, 1)
     axB.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
 
     handles = [plt.Rectangle((0,0),1,1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
-    leg = axB.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.9),
+    plt.subplots_adjust(bottom=0.35)
+    leg = axB.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.25),
                      ncol=6, frameon=True)
     leg.get_frame().set_alpha(0.95); leg.get_frame().set_facecolor("white")
     st.pyplot(figB); plt.close(figB)
@@ -192,7 +235,12 @@ with right:
     # ---- Permeance & Selectivity ----
     perm1 = permeance_from_proxies(prox1, load1, load2)
     perm2 = permeance_from_proxies(prox2, load2, load1)
-    sel   = np.divide(perm1, perm2, out=np.zeros_like(perm1), where=(perm2>0))
+
+    # Blocked 구간에서 선택도/그래프 NaN 방지
+    # (두 기체 모두 차단되면 perm1=perm2=0 → selectivity 0으로)
+    denom = np.where(perm2 > 0, perm2, np.inf)
+    sel = perm1 / denom
+    sel = np.where(np.isfinite(sel), sel, 0.0)
 
     fig1, ax1 = plt.subplots(figsize=(8,3))
     ax1.plot(relP, perm1, label=f"Permeance {gas1}")
