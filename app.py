@@ -1,4 +1,4 @@
-# app.py — Membrane mechanism simulator (Streamlit, wide sliders + compact plots)
+# app.py — Membrane mechanism simulator (Streamlit, previous layout)
 
 import numpy as np
 import matplotlib
@@ -37,7 +37,7 @@ MCOLOR = {
     "Solution": "#6a3d9a",
 }
 
-# ---------------- Helpers (wide slider + number box sync) ----------------
+# ---------------- Helpers (slider + number box sync) ----------------
 def slider_with_box(label, minv, maxv, default, step, key):
     ss = st.session_state
     vkey = f"{key}_val"
@@ -52,8 +52,8 @@ def slider_with_box(label, minv, maxv, default, step, key):
     def _from_box():
         ss[vkey] = float(ss[bkey]); ss[skey] = float(ss[bkey])
 
-    # 슬라이더 넓게(6), 입력칸 좁게(1)
-    col1, col2 = st.columns([6, 1])
+    # 예전 형식: 비율 [4,1]
+    col1, col2 = st.columns([4, 1])
     col1.slider(label, float(minv), float(maxv), float(ss[vkey]),
                 step=float(step), key=skey, on_change=_from_slider)
     col2.number_input(" ", float(minv), float(maxv), float(ss[vkey]),
@@ -122,9 +122,9 @@ def permeance_from_proxies(prox, load_a, load_b):
 
 # ---------------- UI ----------------
 st.set_page_config(page_title="Membrane mechanisms", layout="wide")
-st.title("Membrane Transport Mechanisms – compact plots, wide sliders")
+st.title("Membrane Transport Mechanisms – robust demo")
 
-# Global
+# Global controls (예전 레이아웃)
 T    = slider_with_box("Temperature (K)",       10.0, 600.0, 300.0, 1.0,  "T")
 Pbar = slider_with_box("Total pressure (bar)",   0.1,  10.0,   1.0, 0.1,  "P")
 d_nm = slider_with_box("Pore diameter (nm)",    0.01,  50.0,  0.34, 0.01, "d")
@@ -153,44 +153,44 @@ prox1 = proxies_all_for_gas(gas1, gas2, T, Pbar, d_nm, relP, load1, load2)
 prox2 = proxies_all_for_gas(gas2, gas1, T, Pbar, d_nm, relP, load2, load1)
 mechs = pick_mechanism_from_proxies(prox1)
 
-# -------- Mechanism band (smaller; fill container width) --------
+# -------- Mechanism band (예전 크기) --------
 rgba = np.array([to_rgba(MCOLOR[m]) for m in mechs])[None, :, :]
-figB, axB = plt.subplots(figsize=(6, 1.2))          # compact
+figB, axB = plt.subplots(figsize=(8, 1.4))
 axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
 axB.set_yticks([]); axB.set_xlim(0, 1)
 axB.set_xlabel("Relative pressure (P/P0)")
 axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-st.pyplot(figB, use_container_width=True)
+st.pyplot(figB)
 plt.close(figB)
 
-# -------- Legend only (small) --------
+# -------- Legend only --------
 handles = [plt.Rectangle((0, 0), 1, 1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
-figL, axL = plt.subplots(figsize=(6, 0.9))          # compact
+figL, axL = plt.subplots(figsize=(8, 1.2))
 axL.axis("off")
 figL.legend(handles=handles, loc="center", ncol=6, frameon=True)
-st.pyplot(figL, use_container_width=True)
+st.pyplot(figL)
 plt.close(figL)
 
-# -------- Permeance (compact) --------
+# -------- Permeance (예전 크기) --------
 perm1 = permeance_from_proxies(prox1, load1, load2)
 perm2 = permeance_from_proxies(prox2, load2, load1)
-fig1, ax1 = plt.subplots(figsize=(6, 2))
+fig1, ax1 = plt.subplots(figsize=(8, 3))
 ax1.plot(relP, perm1, label=f"Permeance {gas1}")
 ax1.plot(relP, perm2, "--", label=f"Permeance {gas2}")
 ax1.set_ylabel("Permeance (arb. units)")
 ax1.set_xlabel("Relative pressure (P/P0)")
 ax1.grid(True); ax1.legend()
-st.pyplot(fig1, use_container_width=True)
+st.pyplot(fig1)
 plt.close(fig1)
 
-# -------- Selectivity (compact) --------
+# -------- Selectivity (예전 크기) --------
 sel = np.where(perm2 > 0, perm1/perm2, 0.0)
-fig2, ax2 = plt.subplots(figsize=(6, 2))
+fig2, ax2 = plt.subplots(figsize=(8, 3))
 ax2.plot(relP, sel, label=f"Selectivity {gas1}/{gas2}")
 ax2.set_ylabel("Selectivity (-)")
 ax2.set_xlabel("Relative pressure (P/P0)")
 ax2.grid(True); ax2.legend()
-st.pyplot(fig2, use_container_width=True)
+st.pyplot(fig2)
 plt.close(fig2)
 
 # -------- Summary --------
