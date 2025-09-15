@@ -29,6 +29,25 @@ PI_SOFT_REF  = 1e-6    # [mol m^-2 s^-1 Pa^-1] 근계 투과 기준 (수 μGPU~�
 # 체거름 경계 완충대 / Knudsen 여유폭(Å)
 SIEVE_BAND_A = 0.15
 DELTA_A      = 0.4
+# --- Auto calibration (Option 2) ---
+AUTO_CALIB = True
+
+# 참조점(안정적인 중간 조건)
+REF = {"T": 298.15, "Pbar": 1.0, "d_nm": 0.36, "L_nm": 100.0, "rp": 0.5}
+
+# 목표 GPU (가스별 1회 보정치) — 필요에 따라 조정
+TARGET_GPU = {
+    "CO2": 150.0,
+    "CH4": 40.0,
+    "N2": 5.0,
+    "H2": 200.0,
+    "D2": 180.0,
+    "He": 300.0,
+}
+
+# 보정 배수 저장소
+GAS_SCALE = {}       # 예: {"CO2": 1.23, "CH4": 0.87}
+GPU_UNIT  = 3.35e-10 # 1 GPU = 3.35e-10 mol m^-2 s^-1 Pa^-1
 
 # ---------------------------- Gas parameters ----------------------------
 # M [kg/mol], kinetic diameter d [Å], surface Ea_s [J/mol]
@@ -225,6 +244,8 @@ def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
         elif rule == "Solution": Pi0 = pintr_solution_SI(gas, T, L_m, dqdp_molkgPa[i])
         else:                    Pi0 = PI_TINY
 
+        Pi0 *= GAS_SCALE.get(gas, 1.0)
+
         qi = q_mmolg[i]; qj = q_other_mmolg[i]
         theta = (qi/(qi+qj)) if (qi+qj) > 0 else 0.0
         Pi[i] = Pi0 * theta
@@ -235,6 +256,38 @@ def mechanism_band_rgba(g1, g2, T, P_bar, d_nm, relP):
     names = [classify_mechanism(d_nm, g1, g2, T, P_bar, r) for r in relP]
     rgba = np.array([to_rgba(MECH_COLOR[n]) for n in names])[None, :, :]
     return rgba, names
+
+def intrinsic_pi0_SI(gas, other, T, Pbar, d_nm, L_nm, rp, dqdp_mkpa, q_mmolg):
+    """현재 모델에서 '경쟁/세타' 빼고 순수 intrinsic Π0(SI) 한 점을 계산"""
+    L_m = max(L_nm, 1e-3) * 1e-9
+    M = PARAMS[gas]["M"]
+    rule = classify_mechanism(d_nm, gas, other, T, Pbar, rp)
+    if   rule == "Blocked":   Pi0 = PI_TINY
+    elif rule == "Sieving":   Pi0 = pintr_sieving_SI(d_nm, gas, T, L_m)
+    elif rule == "Knudsen":   Pi0 = pintr_knudsen_SI(d_nm, T, M, L_m)
+    elif rule == "Surface":   Pi0 = pintr_surface_SI(d_nm, gas, T, L_m, dqdp_mkpa)
+    elif rule == "Capillary": Pi0 = pintr_capillary_SI(d_nm, rp, L_m)
+    else:                     Pi0 = pintr_solution_SI(gas, T, L_m, dqdp_mkpa)
+    return Pi0
+
+def ensure_gas_scale_once(gas, other, q1, q2, b1, b2):
+    """가스별 보정 배수를 1회 산출 (이미 있으면 건너뜀)"""
+    if (not AUTO_CALIB) or (gas in GAS_SCALE) or (gas not in TARGET_GPU):
+        return
+    # 참조점에서 DSL 기울기 한 점 계산
+    relP_ref = np.array([REF["rp"]], float)
+    q_vec, dqdp_vec = dsl_loading_and_slope_b(gas, REF["T"], REF["Pbar"], relP_ref, q1, q2, b1, b2)
+    dqdp_ref = float(dqdp_vec[0])
+    q_ref    = float(q_vec[0])
+
+    # intrinsic Π0(SI) → GPU 환산
+    Pi0_SI  = intrinsic_pi0_SI(gas, other, REF["T"], REF["Pbar"], REF["d_nm"], REF["L_nm"], REF["rp"], dqdp_ref, q_ref)
+    now_gpu = Pi0_SI / GPU_UNIT
+    target  = TARGET_GPU[gas]
+    scale   = target / max(now_gpu, 1e-20)
+
+    # 폭주 방지 클립
+    GAS_SCALE[gas] = float(np.clip(scale, 1e-3, 1e3))
 
 # ---------------------------- Streamlit UI ----------------------------
 st.set_page_config(page_title="Membrane Permeance (SI)", layout="wide")
@@ -271,6 +324,10 @@ relP = np.linspace(0.01, 0.99, 500)
 
 q1_mmolg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
 q2_mmolg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
+
+# --- 가스별 1회 자동 캘리브레이션 (참조점에서 scale 추정) ---
+ensure_gas_scale_once(gas1, gas2, q11, q12, b11, b12)
+ensure_gas_scale_once(gas2, gas1, q21, q22, b21, b22)
 
 Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mmolg, dqdp1, q2_mmolg)
 Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mmolg, dqdp2, q1_mmolg)
@@ -349,4 +406,8 @@ st.caption(
     "Permeance in SI is converted to GPU for visualization. "
     "Capillary/Sieving are calibrated proxies. "
     "Surface/Solution terms use DSL slope (∂q/∂p) via ρ_eff."
+)
+st.markdown("---")
+st.caption(
+    f"Auto-calibration scale (per gas): {GAS_SCALE}"
 )
