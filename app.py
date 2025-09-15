@@ -298,7 +298,7 @@ with st.sidebar:
     T    = nudged_slider("Temperature", 10.0, 600.0, 1.0, 300.0, key="T",    unit="K")
     Pbar = nudged_slider("Total Pressure", 0.1, 10.0, 0.1, 1.0,  key="Pbar", unit="bar")
     d_nm = nudged_slider("Pore diameter", 0.01, 50.0, 0.01, 0.34, key="d_nm", unit="nm")
-    L_nm = nudged_slider("Membrane thickness", 10.0, 1000.0, 1.0, 100.0, key="L_nm", unit="nm")
+    L_nm = nudged_slider("Membrane thickness", 10.0, 100000.0, 1.0, 100.0, key="L_nm", unit="nm")
 
     gases = list(PARAMS.keys())
     gas1 = st.selectbox("Gas1 (numerator)", gases, index=gases.index("C3H6"))
