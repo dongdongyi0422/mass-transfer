@@ -1,8 +1,9 @@
 # app.py — Membrane mechanism simulator (Streamlit)
 # - 슬라이더와 숫자입력칸 완전 동기화 (session_state + on_change)
-# - 각 P/P0 지점에서 6가지(proxy) 중 최대값으로 지배 메커니즘 결정 (룰 기반 X)
+# - 각 P/P0 지점에서 6가지(proxy) 중 최대값으로 지배 메커니즘 결정
 # - DSL 흡착 → Surface / Solution 반영
 # - Blocked 구간은 밴드에 표시 + Permeance=0 + Selectivity 안전 처리
+# - 밴드 플롯의 x축라벨과 범례가 겹치지 않도록 하단 여백/배치 수정
 
 import numpy as np
 import matplotlib
@@ -172,7 +173,7 @@ def permeance_from_proxies(prox_dict, loading_self, loading_other):
     - Blocked면 mask에 의해 최대값도 0 → Permeance=0
     """
     arr = np.vstack([prox_dict[m] for m in MECHS])
-    max_proxy = arr.max(axis=0)  # Blocked가 1이어도 다른 proxy는 0이므로, 결과 1 → mask 이전에 이미 적용됨
+    max_proxy = arr.max(axis=0)
     y = loading_self/(loading_self + loading_other + 1e-30)
     return (max_proxy * y) / THICK_M
 
@@ -217,18 +218,27 @@ with right:
     prox2 = proxies_all_for_gas(gas2, gas1, T, Pbar, d_nm, relP, load2, load1)
     mech_names = pick_mechanism_from_proxies(prox1)
 
-    # ---- Mechanism band ----
+    # ---- Mechanism band (여백/배치 수정: 겹침 방지) ----
     rgba = np.array([to_rgba(MCOLOR[m]) for m in mech_names])[None, :, :]
-    figB, axB = plt.subplots(figsize=(8, 1.15))
+    figB, axB = plt.subplots(figsize=(8, 1.7))  # 높이 약간 키움
     axB.imshow(rgba, extent=(0, 1, 0, 1), aspect="auto", origin="lower")
     axB.set_yticks([]); axB.set_xlim(0, 1)
-    axB.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
+    axB.set_xlabel(r"Relative pressure, $P/P_0$ (–)", labelpad=16)  # 라벨 아래로 내림
     axB.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
 
     handles = [plt.Rectangle((0,0),1,1, fc=MCOLOR[m], ec="none", label=m) for m in MECHS]
-    plt.subplots_adjust(bottom=0.35)
-    leg = axB.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.25),
-                     ncol=6, frameon=True)
+    # 하단 여백을 넉넉히 확보
+    plt.subplots_adjust(bottom=0.62)
+    leg = axB.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.45),  # 더 아래로
+        ncol=6,
+        frameon=True,
+        borderpad=0.7,
+        handlelength=1.6,
+        columnspacing=1.2,
+    )
     leg.get_frame().set_alpha(0.95); leg.get_frame().set_facecolor("white")
     st.pyplot(figB); plt.close(figB)
 
@@ -237,7 +247,6 @@ with right:
     perm2 = permeance_from_proxies(prox2, load2, load1)
 
     # Blocked 구간에서 선택도/그래프 NaN 방지
-    # (두 기체 모두 차단되면 perm1=perm2=0 → selectivity 0으로)
     denom = np.where(perm2 > 0, perm2, np.inf)
     sel = perm1 / denom
     sel = np.where(np.isfinite(sel), sel, 0.0)
