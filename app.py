@@ -304,25 +304,28 @@ with colB:
     leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
     st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
-    # --- Permeance (SI) + Legend in GPU ---
+    # --- Permeance (GPU) ---
     st.subheader("Permeance (SI)")
     fig1, ax1 = plt.subplots(figsize=(9, 3))
 
     GPU = 3.35e-10  # 1 GPU = 3.35×10^-10 mol m^-2 s^-1 Pa^-1
 
-    # 범례에는 GPU 수치 표시 (최대값 기준)
-    gpu1 = Pi1.max() / GPU
-    gpu2 = Pi2.max() / GPU
+    # 1) 데이터 자체를 GPU로 환산
+    y1 = Pi1 / GPU
+    y2 = Pi2 / GPU
 
-    ax1.plot(relP, Pi1, label=f"{gas1}")
-    ax1.plot(relP, Pi2, '--', label=f"{gas2}")
+    # 2) 범례 라벨에 GPU 수치(최대값) 표시
+    ax1.plot(relP, y1, label=f"{gas1} ({y1.max():,.0f})")
+    ax1.plot(relP, y2, '--', label=f"{gas2} ({y2.max():,.0f})")
 
+    # 3) y축 라벨을 GPU로 (이제 데이터와 일치)
     ax1.set_ylabel(r"$\Pi$  (GPU)")
     ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax1.grid(True)
-    
-    # 범례 제목을 Permeance (GPU)로
-    leg1 = ax1.legend(title="Permeance (GPU)")
+
+    # 4) 범례 제목
+    ax1.legend(title="Permeance (GPU)")
+
     st.pyplot(fig1, use_container_width=True)
     plt.close(fig1)
 
