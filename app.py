@@ -39,26 +39,27 @@ PARAMS = {
 }
 
 # ---------------------------- UI helper: slider + number + − / ＋ ----------------------------
-def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", big_step_mult=10):
+def nudged_slider(
+    label, vmin, vmax, vstep, vinit, key, unit="", decimals=3
+):
     """
-    Composite widget:
-      [ Slider ][ NumberInput ][ (spacer) ][ − ][ ＋ ]
+    2-Row UI:
+      Row1: [ Slider (full width) ]
+      Row2: [ NumberInput (wide) ][ spacer ][ − ][ + ]
     - st.session_state[key] 하나만 '캐논' 값으로 유지
-    - view 위젯은 *_view 키로만 사용 (직접 대입 금지)
-    - 숫자 입력칸을 넓히고, -/＋ 버튼 사이에 간격(spacer) 추가
-    - '＋'는 전각(풀와이드) 기호로 표기가 깨지지 않게 함
+    - view 위젯은 *_view 키만 사용 (직접 대입 금지)
+    - decimals: 숫자 입력 표시 자릿수 (기본 3)
     """
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
 
-    # 레이아웃: 슬라이더(넓게) / 숫자입력(넓게) / 스페이서 / - / ＋
-    # 필요하면 비율을 더 키워 숫자 입력칸을 더 넓힐 수 있음
-    c1, c2, csp, c3, c4 = st.columns([0.50, 0.38, 0.06, 0.03, 0.03])
-    lab = f"{label}{(' ['+unit+']') if unit else ''}"
-
     cur = float(st.session_state[key])
+    lab = f"{label}{(' ['+unit+']') if unit else ''}"
+    fmt = f"%.{int(decimals)}f"
 
-    sld_val = c1.slider(
+    # -------- Row 1: slider (겹침 방지 위해 단독 행) --------
+    sld_container = st.container()
+    sld_val = sld_container.slider(
         lab,
         min_value=float(vmin),
         max_value=float(vmax),
@@ -66,23 +67,27 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", big_step_mult=1
         step=float(vstep),
         key=f"{key}_sld_view",
     )
-    num_val = c2.number_input(
+
+    # -------- Row 2: number + spacer + - + --------
+    row = st.container()
+    c_num, c_sp, c_minus, c_plus = row.columns([0.72, 0.08, 0.10, 0.10], gap="small")
+
+    num_val = c_num.number_input(
         "",
         min_value=float(vmin),
         max_value=float(vmax),
         value=float(cur),
         step=float(vstep),
-        format="%.6f",
+        format=fmt,
         key=f"{key}_num_view",
     )
-
-    # spacer 컬럼(csp)은 아무 것도 그리지 않아 간격만 만든다
-    with csp:
+    # spacer는 비워서 간격만 확보
+    with c_sp:
         st.write("")
 
-    # 버튼: 전각 '－', '＋' 사용해 아이콘이 잘려 보이지 않도록
-    minus = c3.button("－", key=f"{key}_minus", help=f"-{vstep:g}")
-    plus  = c4.button("＋", key=f"{key}_plus",  help=f"+{vstep:g}")
+    # 버튼은 전각 기호 안 써도 되게 별도 행에서 공간 확보
+    minus = c_minus.button("-", key=f"{key}_minus", help=f"-{vstep:g}")
+    plus  = c_plus.button("+", key=f"{key}_plus",  help=f"+{vstep:g}")
 
     # 변경 우선순위: 버튼 > 숫자입력 > 슬라이더
     new_val = cur
@@ -100,6 +105,7 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", big_step_mult=1
         st.session_state[key] = new_val
 
     return st.session_state[key]
+
 
 # ---------------------------- DSL adsorption ----------------------------
 def dsl_loading_and_slope(gas, T, P_bar, relP_vec, q1_mmolg, q2_mmolg, Qst1_kJ, Qst2_kJ):
