@@ -23,7 +23,9 @@ K_CAP   = 1e-7    # (mol m^-1.5 s^-1 Pa^-1) capillary proxy scale
 E_SIEVE = 6.0e3   # J/mol   (near-threshold sieving barrier)
 PI_TINY = 1e-14   # mol m^-2 s^-1 Pa^-1 (numerical floor)
 SOL_TH_NM = 0.30  # nm: solution-diffusion favored at/under this pore size (<=)
-
+# 상단 상수
+DELTA_SOFT_A = 0.50    # [Å] 근계 폭; 0.4~0.6에서 조정
+PI_SOFT_REF  = 1e-8    # [mol m^-2 s^-1 Pa^-1] 근계 투과 기준 (수 μGPU~수십 GPU 수준으로 조절)
 # 체거름 경계 완충대 / Knudsen 여유폭(Å)
 SIEVE_BAND_A = 0.15
 DELTA_A      = 0.4
@@ -170,10 +172,6 @@ def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
     Dk = (2.0/3.0) * r * np.sqrt((8.0*R*T)/(np.pi*M))
     Pi = Dk / (L_m * R * T)
     return Pi
-
-# 상단 상수
-    DELTA_SOFT_A = 0.50    # [Å] 근계 폭; 0.4~0.6에서 조정
-    PI_SOFT_REF  = 1e-8    # [mol m^-2 s^-1 Pa^-1] 근계 투과 기준 (수 μGPU~수십 GPU 수준으로 조절)
 
 def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
     dA = PARAMS[gas]["d"]       # Å
