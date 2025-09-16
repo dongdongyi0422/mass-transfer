@@ -304,48 +304,41 @@ else:
 Sel = np.divide(Pi1,Pi2,out=np.zeros_like(Pi1),where=(Pi2>0))
 Pi1_gpu=Pi1/GPU_UNIT; Pi2_gpu=Pi2/GPU_UNIT
 
+# ==== 공통 X축 정의 (둘 다 여기만 봅니다) ====
+if time_mode:
+    x_axis_common = t
+    x_label_common = "Time (s)"
+    x_min, x_max = float(t[0]), float(t[-1])
+    x_ticks_common = np.linspace(x_min, x_max, 6)
+else:
+    x_axis_common = relP
+    x_label_common = r"Relative pressure, $P/P_0$ (–)"
+    x_min, x_max = 0.0, 1.0
+    x_ticks_common = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+
 # -------------------- layout --------------------
 colA,colB=st.columns([1,2])
 
 with colB:
-        # === Mechanism map (weighted) ===
-    if time_mode:
-        st.subheader("Mechanism map (over time)")
-        # 시간축용 밴드 계산
-        rgba, _ = mechanism_band_rgba_time(
-            gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar
-        )
+    # === Mechanism map (weighted) ===
+    figBand, axBand = plt.subplots(figsize=(9, 0.7))
+    rgba = (mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar)[0]
+            if time_mode else
+            mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12)[0])
 
-        # ⬇⬇⬇ 시간축으로 꼭 이렇게 그립니다!
-        figBand, axBand = plt.subplots(figsize=(9, 0.7))
-        axBand.imshow(
-            rgba,
-            extent=(float(t[0]), float(t[-1]), 0, 1),  # <- x축: 시간 범위(초)
-            aspect="auto",
-            origin="lower",
-        )
-        axBand.set_xlabel("Time (s)")
-        axBand.set_xlim(float(t[0]), float(t[-1]))
-        # 보기 좋은 시간 눈금 6개
-        axBand.set_xticks(np.linspace(float(t[0]), float(t[-1]), 6))
-        axBand.set_yticks([])
+    axBand.imshow(
+        rgba,
+        extent=(x_min, x_max, 0, 1),   # ← 공통 범위 적용!
+        aspect="auto",
+        origin="lower",
+    )
+    axBand.set_xlabel(x_label_common)
+    axBand.set_xlim(x_min, x_max)
+    axBand.set_xticks(x_ticks_common)
+    axBand.set_yticks([])
+    # (범례 그대로)
 
-    else:
-        st.subheader("Mechanism map (along relative pressure)")
-        rgba, _ = mechanism_band_rgba(
-            gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
-        )
-        figBand, axBand = plt.subplots(figsize=(9, 0.7))
-        axBand.imshow(
-            rgba,
-            extent=(0, 1, 0, 1),  # <- x축: P/P0
-            aspect="auto",
-            origin="lower",
-        )
-        axBand.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-        axBand.set_xlim(0, 1)
-        axBand.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-        axBand.set_yticks([])
 
     # 범례 공통
     handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
@@ -355,17 +348,22 @@ with colB:
     st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
 
-    # Permeance (GPU)
-    st.subheader("Permeance (GPU)")
-    fig1,ax1=plt.subplots(figsize=(9,3))
-    ax1.plot(x_axis,Pi1_gpu,label=f"{gas1}")
-    ax1.plot(x_axis,Pi2_gpu,'--',label=f"{gas2}")
-    ax1.set_ylabel(r"$\Pi$ (GPU)"); ax1.set_xlabel(x_label)
-    ax1.ticklabel_format(axis='y',style='plain',useOffset=False)
+    # === Permeance (GPU) ===
+    fig1, ax1 = plt.subplots(figsize=(9, 3))
+    ax1.plot(x_axis_common, Pi1 / GPU_UNIT, label=f"{gas1}")
+    ax1.plot(x_axis_common, Pi2 / GPU_UNIT, '--', label=f"{gas2}")
+
+    # x축을 메커니즘 바와 동일하게
+    ax1.set_xlim(x_min, x_max)
+    ax1.set_xticks(x_ticks_common)
+    ax1.set_xlabel(x_label_common)
+
+    ax1.set_ylabel(r"$\Pi$ (GPU)")
+    ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax1.get_yaxis().get_offset_text().set_visible(False)
     ax1.grid(True); ax1.legend(title="Permeance (GPU)")
-    st.pyplot(fig1,use_container_width=True); plt.close(fig1)
+
 
     # Selectivity
     st.subheader("Selectivity")
