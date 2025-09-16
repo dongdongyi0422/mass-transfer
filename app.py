@@ -185,6 +185,48 @@ def mean_free_path_nm(T, P_bar, d_ang):
     kB = 1.380649e-23; P = P_bar*1e5; d = d_ang*1e-10
     return (kB*T/(np.sqrt(2)*np.pi*d*d*P))*1e9
 
+def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
+    r = max(pore_d_nm*1e-9/2.0, 1e-12)
+    Dk = (2.0/3.0) * r * np.sqrt((8.0*R*T)/(np.pi*M))
+    Pi = Dk / (L_m * R * T)
+    return Pi
+
+def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
+    dA = PARAMS[gas]["d"]       # Å
+    pA = pore_d_nm * 10.0       # Å
+    delta = dA - pA             # >0 이면 기공이 더 작음(차단 경향)
+
+    if delta > 0:
+        # --- 소프트 차단 (gate opening/tunneling proxy) ---
+        # delta가 작을수록(경계에 가까울수록) 유한한 투과 발생
+        Pi_gate = PI_SOFT_REF * np.exp(- (delta/DELTA_SOFT_A)**2) * np.exp(-E_SIEVE/(R*T))
+        return max(Pi_gate, PI_TINY)
+
+    # --- 기공이 더 큰 경우: 기존 체거름 식 ---
+    x = max(1.0 - (dA/pA)**2, 0.0)
+    f_open = x**2
+    Pi_ref = 3e-4   # 문헌 스케일(수십~백 GPU)을 맞추기 위한 보정치
+    Pi = Pi_ref * f_open * np.exp(-E_SIEVE/(R*T))
+    return max(Pi, PI_TINY)
+
+
+def pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa):
+    Ds = D0_SURF * np.exp(-PARAMS[gas]["Ea_s"]/(R*T))
+    Pi = (Ds / L_m) * (dqdp_molkgPa * RHO_EFF)
+    return max(Pi, 0.0)
+
+def pintr_capillary_SI(pore_d_nm, rp, L_m):
+    r_m = max(pore_d_nm*1e-9/2.0, 1e-12)
+    thresh = np.exp(-120.0/( (pore_d_nm/2.0)*rp*300.0 + 1e-12 ))
+    if rp <= thresh:
+        return 0.0
+    return K_CAP * np.sqrt(r_m) / L_m
+
+def pintr_solution_SI(gas, T, L_m, dqdp_molkgPa):
+    Dsol = D0_SOL * np.exp(-E_D_SOL/(R*T)) / np.sqrt(PARAMS[gas]["M"]/1e-3)
+    Pi = (Dsol / L_m) * (dqdp_molkgPa * RHO_EFF)
+    return max(Pi, 0.0)
+
 def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
     d1, d2 = PARAMS[gas1]["d"], PARAMS[gas2]["d"]  # [Å]
     dmin = min(d1, d2)
@@ -244,49 +286,6 @@ def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
                 q += dt * kLDF * (q_eq_i - q)
             q_dyn[i] = q
         return q_dyn, dqdp_series
-
-
-def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
-    r = max(pore_d_nm*1e-9/2.0, 1e-12)
-    Dk = (2.0/3.0) * r * np.sqrt((8.0*R*T)/(np.pi*M))
-    Pi = Dk / (L_m * R * T)
-    return Pi
-
-def pintr_sieving_SI(pore_d_nm, gas, T, L_m):
-    dA = PARAMS[gas]["d"]       # Å
-    pA = pore_d_nm * 10.0       # Å
-    delta = dA - pA             # >0 이면 기공이 더 작음(차단 경향)
-
-    if delta > 0:
-        # --- 소프트 차단 (gate opening/tunneling proxy) ---
-        # delta가 작을수록(경계에 가까울수록) 유한한 투과 발생
-        Pi_gate = PI_SOFT_REF * np.exp(- (delta/DELTA_SOFT_A)**2) * np.exp(-E_SIEVE/(R*T))
-        return max(Pi_gate, PI_TINY)
-
-    # --- 기공이 더 큰 경우: 기존 체거름 식 ---
-    x = max(1.0 - (dA/pA)**2, 0.0)
-    f_open = x**2
-    Pi_ref = 3e-4   # 문헌 스케일(수십~백 GPU)을 맞추기 위한 보정치
-    Pi = Pi_ref * f_open * np.exp(-E_SIEVE/(R*T))
-    return max(Pi, PI_TINY)
-
-
-def pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa):
-    Ds = D0_SURF * np.exp(-PARAMS[gas]["Ea_s"]/(R*T))
-    Pi = (Ds / L_m) * (dqdp_molkgPa * RHO_EFF)
-    return max(Pi, 0.0)
-
-def pintr_capillary_SI(pore_d_nm, rp, L_m):
-    r_m = max(pore_d_nm*1e-9/2.0, 1e-12)
-    thresh = np.exp(-120.0/( (pore_d_nm/2.0)*rp*300.0 + 1e-12 ))
-    if rp <= thresh:
-        return 0.0
-    return K_CAP * np.sqrt(r_m) / L_m
-
-def pintr_solution_SI(gas, T, L_m, dqdp_molkgPa):
-    Dsol = D0_SOL * np.exp(-E_D_SOL/(R*T)) / np.sqrt(PARAMS[gas]["M"]/1e-3)
-    Pi = (Dsol / L_m) * (dqdp_molkgPa * RHO_EFF)
-    return max(Pi, 0.0)
 
 # -------- Heuristic mechanism weights (0~1), sum to 1 --------
 def mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_mkpa):
