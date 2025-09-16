@@ -11,6 +11,34 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from matplotlib.colors import to_rgba
 
+# ===== Utilities for TIME (transient LDF) =====
+def pressure_schedule_series(t, P0_bar, ramp, tau):
+    """Return P_bar(t) in bar for a given schedule."""
+    if isinstance(ramp, str) and ramp.lower().startswith("step"):
+        return np.full_like(t, float(P0_bar), dtype=float)
+    # exponential ramp: P(t) = P0*(1 - exp(-t/tau))
+    tau = max(float(tau), 1e-9)
+    return float(P0_bar) * (1.0 - np.exp(-t/tau))
+
+def ldf_evolve_q(t, P_bar_t, q_eq_fn, kLDF, q0=0.0):
+    """
+    LDF integrator: dq/dt = k_LDF * (q*(P) - q)
+    q_eq_fn(P_bar) -> (q_eq[mmol/g], dqdp_eq[mol/kg/Pa])
+    """
+    q_dyn = np.zeros_like(t, dtype=float)
+    dqdp_series = np.zeros_like(t, dtype=float)
+    q = float(q0)
+    for i in range(len(t)):
+        Pbar_i = float(P_bar_t[i])
+        q_eq_i, dqdp_i = q_eq_fn(Pbar_i)
+        dqdp_series[i] = dqdp_i
+        if i > 0:
+            dt = float(t[i] - t[i-1])
+            q += dt * float(kLDF) * (q_eq_i - q)
+        q_dyn[i] = q
+    return q_dyn, dqdp_series
+# ===== end utilities =====
+
 # ---------------------------- Physical constants ----------------------------
 R = 8.314  # J/mol/K
 
@@ -374,8 +402,13 @@ with st.sidebar:
 # ---------------------------- Compute ----------------------------
 GPU = 3.35e-10
 
-if mode == "Relative pressure (P/P0)":
+if mode == "TIME":   # <-- UI에서 모드 선택
+    t = np.arange(0.0, t_end + dt, dt)
+    P_bar_t = pressure_schedule_series(t, P0bar, ramp, tau)
+    relP = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)
+else:   # 기존 P/P0 모드
     relP = np.linspace(0.01, 0.99, 500)
+
 
     # --- DSL (b-기반이 있으면 그걸 사용; 없으면 기존 함수 사용) ---
     try:
