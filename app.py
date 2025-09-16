@@ -278,37 +278,6 @@ def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
     # 5) 그 외 → 표면 확산
     return "Surface"
 
-def pressure_schedule_series(t, P0_bar, ramp, tau):
-        """t[s]에서의 절대압력 [bar] 시계열 생성"""
-        if ramp.startswith("Step"):
-            P_bar_t = np.full_like(t, float(P0_bar))
-        else:  # Exp ramp
-            P_bar_t = P0_bar*(1.0 - np.exp(-t/float(tau)))
-        return P_bar_t
-
-def ldf_evolve_q(t, P_bar_t, q_eq_fn, kLDF, q0=0.0):
-        """
-        LDF: dq/dt = k*(q*(P) - q)
-        q_eq_fn(P_bar)->(q_eq, dqdp_eq) 를 제공해야 함. (단위: q[mmol/g], dqdp[mol/kg/Pa])
-        반환: q_dyn[mmol/g], dqdp_eq_series[mol/kg/Pa]  (같은 길이)
-        """
-        q_dyn = np.zeros_like(t, float)
-        dqdp_series = np.zeros_like(t, float)
-        q = float(q0)
-        for i in range(len(t)):
-            Pbar_i = float(P_bar_t[i])
-            # q_eq (mmol/g), dqdp_eq (mol/kg/Pa) at current pressure
-            q_eq_i, dqdp_i = q_eq_fn(Pbar_i)
-            dqdp_series[i] = dqdp_i
-            # Explicit Euler (안정성을 위해 dt*kLDF <= ~0.2 권장)
-            if i == 0:
-                q = q  # initial
-            else:
-                dt = float(t[i]-t[i-1])
-                q += dt * kLDF * (q_eq_i - q)
-            q_dyn[i] = q
-        return q_dyn, dqdp_series
-
 # -------- Heuristic mechanism weights (0~1), sum to 1 --------
 def mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_mkpa):
     """
@@ -640,7 +609,7 @@ with colB:
 
     st.subheader("Selectivity")
     fig2, ax2 = plt.subplots(figsize=(9,3))
-    ax2.plot(relP, Sel, label=f"{gas1}/{gas2}")
+    ax2.plot(x_axis, Sel, label=f"{gas1}/{gas2}")
     ax2.set_ylabel("Selectivity (–)")
     ax2.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
