@@ -288,6 +288,79 @@ def pintr_solution_SI(gas, T, L_m, dqdp_molkgPa):
     Pi = (Dsol / L_m) * (dqdp_molkgPa * RHO_EFF)
     return max(Pi, 0.0)
 
+# -------- Heuristic mechanism weights (0~1), sum to 1 --------
+def mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_mkpa):
+    """
+    입력
+      gas, other : 가스명 (PARAMS에 존재)
+      T [K], P_bar [bar], pore_d_nm [nm], rp (=P/P0), dqdp_mkpa [mol/kg/Pa]
+    출력
+      w : dict  (keys: "Blocked","Sieving","Knudsen","Surface","Capillary","Solution")
+          각 가중치의 합은 1 (노멀라이즈)
+    """
+    # 초기값
+    w = {k: 0.0 for k in ["Blocked","Sieving","Knudsen","Surface","Capillary","Solution"]}
+
+    d1 = PARAMS[gas]["d"]
+    d2 = PARAMS[other]["d"]
+    dmin = min(d1, d2)           # [Å]
+    pA   = pore_d_nm * 10.0      # [Å]
+    lam  = mean_free_path_nm(T, P_bar, 0.5*(d1+d2))  # [nm]
+
+    # 1) 완전 차단 근처
+    if pA <= dmin - SIEVE_BAND_A:
+        w["Blocked"] = 1.0
+        return w
+
+    # 2) 솔루션-확산(매우 작은 기공)
+    if pore_d_nm <= SOL_TH_NM:
+        w["Solution"] = 1.0
+        return w
+
+    # 보조 시그모이드(부드러운 경계)
+    def sig(x, s=1.0):
+        return 1.0/(1.0 + np.exp(-x/s))
+
+    # 3) Sieving: 분자 직경 근방일수록 ↑
+    #    pA-dmin 가 0 부근이면 가중치가 크고, 멀어질수록 감소
+    w_sieve = np.exp(-((pA - dmin)/max(SIEVE_BAND_A,1e-6))**2)
+
+    # 4) Knudsen: λ 가 기공보다 훨씬 크면 ↑  (pore_d_nm << λ)
+    r = pore_d_nm / max(lam, 1e-9)
+    w_kn = 1.0 / (1.0 + (r/0.5)**2)   # r→0 이면 ~1, r 커지면 감소
+
+    # 5) Capillary: 큰 기공(≥~2 nm) + 높은 rp 에서 ↑
+    w_cap = sig((pore_d_nm - 2.0)/0.2) * sig((rp - 0.5)/0.05)
+
+    # 6) Surface: 흡착기울기(dq/dp)가 클수록 ↑ (단위 의존 → 완만한 스케일)
+    alpha = 5e5   # 필요시 조정
+    w_surf = 1.0 - np.exp(-alpha*max(float(dqdp_mkpa),0.0))
+
+    # 7) Solution(경계가 아닌 영역에서는 낮게만 기여)
+    w_sol = sig((SOL_TH_NM - pore_d_nm)/0.02)
+
+    # 8) Blocked(경계 완충): dmin 아래 조금만 벗어나도 약간 남겨둠
+    if pA < dmin:
+        w_blk = np.exp(-((dmin - pA)/max(SIEVE_BAND_A,1e-6))**2)
+    else:
+        w_blk = 0.0
+
+    # 합치고 정규화
+    w["Blocked"]  = float(w_blk)
+    w["Sieving"]  = float(w_sieve)
+    w["Knudsen"]  = float(w_kn)
+    w["Surface"]  = float(w_surf)
+    w["Capillary"]= float(w_cap)
+    w["Solution"] = float(w_sol)
+
+    s = sum(w.values())
+    if s <= 1e-12:
+        w["Surface"] = 1.0
+        return w
+    for k in w:
+        w[k] /= s
+    return w
+
 def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
                         q_mmolg, dqdp_molkgPa, q_other_mmolg):
     """
@@ -320,29 +393,29 @@ def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
                               dqdp_molkgPa[i], 0.0)
 
         # (3) 직렬-병렬 혼합
-    # 3-1) pore-like 그룹(공극 통과 경로)과 diffusion-like 그룹(흡착/확산 경로)으로 분리
-    Pi_pore = (
-        w["Sieving"]  * Pi_intr["Sieving"]  +
-        w["Knudsen"]  * Pi_intr["Knudsen"]  +
-        w["Capillary"]* Pi_intr["Capillary"]
-    )
+        # 3-1) pore-like 그룹(공극 통과 경로)과 diffusion-like 그룹(흡착/확산 경로)으로 분리
+        Pi_pore = (
+            w["Sieving"]  * Pi_intr["Sieving"]  +
+            w["Knudsen"]  * Pi_intr["Knudsen"]  +
+            w["Capillary"]* Pi_intr["Capillary"]
+        )
 
-    Pi_diff = (
-        w["Surface"]  * Pi_intr["Surface"]  +
-        w["Solution"] * Pi_intr["Solution"]
-    )
+        Pi_diff = (
+            w["Surface"]  * Pi_intr["Surface"]  +
+            w["Solution"] * Pi_intr["Solution"]
+        )
 
-    # 3-2) 직렬 저항 결합 (harmonic mean 형태)
-    #     1/Π_mix = 1/Π_pore + 1/Π_diff
-    eps = 1e-30  # 0 나눗셈 방지용 작은 값
-    if Pi_pore <= eps and Pi_diff <= eps:
-        Pi0_mix = PI_TINY
-    elif Pi_pore <= eps:
-        Pi0_mix = Pi_diff
-    elif Pi_diff <= eps:
-        Pi0_mix = Pi_pore
-    else:
-        Pi0_mix = 1.0 / ( (1.0/(Pi_pore + eps)) + (1.0/(Pi_diff + eps)) )
+        # 3-2) 직렬 저항 결합 (harmonic mean 형태)
+        #     1/Π_mix = 1/Π_pore + 1/Π_diff
+        eps = 1e-30  # 0 나눗셈 방지용 작은 값
+        if Pi_pore <= eps and Pi_diff <= eps:
+            Pi0_mix = PI_TINY
+        elif Pi_pore <= eps:
+            Pi0_mix = Pi_diff
+        elif Pi_diff <= eps:
+            Pi0_mix = Pi_pore
+        else:
+           Pi0_mix = 1.0 / ( (1.0/(Pi_pore + eps)) + (1.0/(Pi_diff + eps)) )
 
 
         # (4) 경쟁흡착 점유율
