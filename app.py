@@ -396,6 +396,40 @@ Pi2_gpu  = Pi2 / GPU_UNIT
 colA, colB = st.columns([1,2])
 
 with colB:
+    # ---- Mechanism map (weighted) ----
+    if time_mode:
+        st.subheader("Mechanism map (over time)")
+        # 시간축 밴드 계산
+        rgba, mech_names = mechanism_band_rgba_time(
+            gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar
+        )
+        # 시간축으로 그리기 (x축: 초)
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(rgba, extent=(float(t[0]), float(t[-1]), 0, 1),
+                      aspect='auto', origin='lower')
+        axBand.set_xlabel("Time (s)")
+        axBand.set_xlim(float(t[0]), float(t[-1]))
+    else:
+        st.subheader("Mechanism map (along relative pressure)")
+        # 상대압 밴드 계산
+        rgba, mech_names = mechanism_band_rgba(
+            gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
+        )
+        # P/P0로 그리기 (0~1)
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(rgba, extent=(0, 1, 0, 1),
+                      aspect='auto', origin='lower')
+        axBand.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
+        axBand.set_xlim(0, 1)
+
+    axBand.set_yticks([])
+    handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
+    leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
+                        ncol=6, frameon=True)
+    leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
+    st.pyplot(figBand, use_container_width=True); plt.close(figBand)
+
+with colB:
     st.subheader("Mechanism map (weighted)")
     if time_mode:
         rgba, mech_names = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar)
