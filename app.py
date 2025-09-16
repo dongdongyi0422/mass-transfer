@@ -393,6 +393,15 @@ if mode == "Relative pressure (P/P0)":
     # --- Permeance series ---
     Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mmolg, dqdp1, q2_mmolg)
     Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mmolg, dqdp2, q1_mmolg)
+
+    # x축 / relP 벡터 선택 (밴드 계산용)
+    if mode == "Relative pressure (P/P0)":
+        relP_plot = relP
+    else:
+
+        # 시간 모드에서는 이미 만든 relP_t 사용 (없으면 아래처럼 만들어 주세요)
+        relP_plot = relP_t  # = np.clip(P_bar_t/P0bar, 1e-6, 0.9999)
+
     x_axis = relP
     x_label = r"Relative pressure, $P/P_0$ (–)"
 
