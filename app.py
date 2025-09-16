@@ -320,24 +320,12 @@ def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
 def mechanism_band_rgba_time(g1, g2, T, P_bar, d_nm, L_nm,
                              t_vec, P_bar_t, dqdp_series_g1):
     """
-    시간축 밴드: 각 시각 t에서 intrinsic Π와 가중치(softmax/heuristic)를 계산해
-    가장 큰 메커니즘으로 색을 칠해 줍니다.
-    입력
-      - g1,g2: 가스명
-      - T, P_bar: 온도[K], 총압[bar] (분류/λ 계산 용)
-      - d_nm, L_nm: 기공 직경[nm], 두께[nm]
-      - t_vec: 시간 배열
-      - P_bar_t: 시간에 따른 압력[bar]
-      - dqdp_series_g1: 시간에 따른 ∂q/∂p (gas1) [mol/kg/Pa]
-    출력
-      - rgba: (1, N, 4) 색 배열
-      - names: 길이 N의 메커니즘 이름 리스트
+    Time 모드에서 밴드를 '가중치'로 색칠.
+    각 시각 t에서 intrinsic Π와 가중치를 계산해 최대 항의 색으로 칠함.
     """
     L_m = max(float(L_nm), 1e-3) * 1e-9
     M1  = PARAMS[g1]["M"]
-    # 상대압 rp(t) = P(t)/P0  (P0는 시간 모드 사이드바의 feed P0bar)
-    # UI 코드에서 이미 P0bar가 존재하므로 import 없이 전역 참조
-    rp_t = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)
+    rp_t = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)  # 상대압력
 
     names = []
     for i in range(len(t_vec)):
@@ -535,6 +523,31 @@ st.write({"rp_mid": rp_mid, "weights": w})
 
 # ---------------------------- Layout: Plots & Info ----------------------------
 colA, colB = st.columns([1,2])
+
+with colB:
+    st.subheader("Mechanism map (along relative pressure)")
+    if time_mode:
+        # ---- Time 모드: 시간축 밴드 ----
+        rgba, mech_names = mechanism_band_rgba_time(
+            gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1
+        )
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(rgba, extent=(float(t[0]), float(t[-1]), 0, 1),
+                      aspect='auto', origin='lower')
+        axBand.set_xlabel("Time (s)")
+    else:
+        # ---- P/P0 모드: 상대압 밴드 ----
+        rgba, mech_names = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP_plot)
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(rgba, extent=(0, 1, 0, 1), aspect='auto', origin='lower')
+        axBand.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
+
+    axBand.set_yticks([]); axBand.set_xlim(axBand.get_xbound())
+    handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
+    leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
+                        ncol=6, frameon=True)
+    leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
+    st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
 with colB:
     st.subheader("Mechanism map (along relative pressure)")
