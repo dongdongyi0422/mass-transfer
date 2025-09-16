@@ -438,7 +438,7 @@ else:   # 기존 P/P0 모드
     x_axis = relP
     x_label = r"Relative pressure, $P/P_0$ (–)"
 
-else:
+    else:
     # ===== Transient (LDF) branch =====
     # 1) 시간축 & 압력 스케줄
     t = np.arange(0.0, t_end+dt, dt)
