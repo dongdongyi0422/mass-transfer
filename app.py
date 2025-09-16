@@ -20,6 +20,28 @@ def pressure_schedule_series(t, P0_bar, ramp, tau):
     tau = max(float(tau), 1e-9)
     return float(P0_bar) * (1.0 - np.exp(-t/tau))
 
+# --- TIME 모드에서 (ldf_evolve_q 앞쪽) 콜백을 이렇게 고치세요 ---
+
+def qeq_slope_cb_g1(Pbar_scalar: float):
+    # Pbar_scalar [bar] -> relP in [1e-6, 0.9999]
+    relP_scalar = float(np.clip(Pbar_scalar / float(Pbar), 1e-6, 0.9999))
+    qv, dv = dsl_loading_and_slope_b(
+        gas1, T, Pbar,
+        np.array([relP_scalar], dtype=float),
+        q11, q12, b11, b12
+    )
+    return float(qv[0]), float(dv[0])
+
+def qeq_slope_cb_g2(Pbar_scalar: float):
+    relP_scalar = float(np.clip(Pbar_scalar / float(Pbar), 1e-6, 0.9999))
+    qv, dv = dsl_loading_and_slope_b(
+        gas2, T, Pbar,
+        np.array([relP_scalar], dtype=float),
+        q21, q22, b21, b22
+    )
+    return float(qv[0]), float(dv[0])
+
+
 def ldf_evolve_q(t, P_bar_t, q_eq_fn, kLDF, q0=0.0):
     """
     LDF integrator: dq/dt = k_LDF * (q*(P) - q)
