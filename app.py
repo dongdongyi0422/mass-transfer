@@ -186,6 +186,38 @@ def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
     # 5) 그 외 → 표면 확산
     return "Surface"
 
+    def pressure_schedule_series(t, P0_bar, ramp, tau):
+        """t[s]에서의 절대압력 [bar] 시계열 생성"""
+        if ramp.startswith("Step"):
+            P_bar_t = np.full_like(t, float(P0_bar))
+        else:  # Exp ramp
+            P_bar_t = P0_bar*(1.0 - np.exp(-t/float(tau)))
+        return P_bar_t
+
+    def ldf_evolve_q(t, P_bar_t, q_eq_fn, kLDF, q0=0.0):
+        """
+        LDF: dq/dt = k*(q*(P) - q)
+        q_eq_fn(P_bar)->(q_eq, dqdp_eq) 를 제공해야 함. (단위: q[mmol/g], dqdp[mol/kg/Pa])
+        반환: q_dyn[mmol/g], dqdp_eq_series[mol/kg/Pa]  (같은 길이)
+        """
+        q_dyn = np.zeros_like(t, float)
+        dqdp_series = np.zeros_like(t, float)
+        q = float(q0)
+        for i in range(len(t)):
+            Pbar_i = float(P_bar_t[i])
+            # q_eq (mmol/g), dqdp_eq (mol/kg/Pa) at current pressure
+            q_eq_i, dqdp_i = q_eq_fn(Pbar_i)
+            dqdp_series[i] = dqdp_i
+            # Explicit Euler (안정성을 위해 dt*kLDF <= ~0.2 권장)
+            if i == 0:
+                q = q  # initial
+            else:
+                dt = float(t[i]-t[i-1])
+                q += dt * kLDF * (q_eq_i - q)
+            q_dyn[i] = q
+        return q_dyn, dqdp_series
+
+
 def pintr_knudsen_SI(pore_d_nm, T, M, L_m):
     r = max(pore_d_nm*1e-9/2.0, 1e-12)
     Dk = (2.0/3.0) * r * np.sqrt((8.0*R*T)/(np.pi*M))
@@ -319,21 +351,96 @@ with st.sidebar:
     b21 = nudged_slider("b1 Gas2",   1e-10, 1e-1,  1e-8, 1e-5, key="b21", unit="Pa⁻¹", decimals=8)
     b22 = nudged_slider("b2 Gas2",   1e-10, 1e-1,  1e-8, 5e-6, key="b22", unit="Pa⁻¹", decimals=8)
 
+    # === Axis / transient mode toggle ===
+    mode = st.radio(
+    "X-axis / Simulation mode",
+    ["Relative pressure (P/P0)", "Time (transient LDF)"],
+    index=0,
+    )
+
+    if mode == "Time (transient LDF)":
+        st.subheader("Transient (LDF) settings")
+        t_end = nudged_slider("Total time", 0.1, 3600.0, 0.1, 120.0, key="t_end", unit="s")
+        dt    = nudged_slider("Time step",  1e-3, 10.0, 1e-3, 0.1,   key="dt",    unit="s")
+        kLDF  = nudged_slider("k_LDF",      1e-4, 10.0, 1e-4, 0.05,  key="kLDF",  unit="s⁻¹")
+        P0bar = nudged_slider("Feed P₀",    0.1,  10.0, 0.1,  Pbar,  key="P0bar", unit="bar")
+
+        ramp = st.selectbox("Pressure schedule P(t)",
+                            ["Step (P=P₀)", "Exp ramp: P₀(1-exp(-t/τ))"],
+                            index=1)
+        tau  = nudged_slider("τ (only for exp ramp)", 1e-3, 1000.0, 1e-3, 5.0,
+                             key="tau", unit="s")
+
 # ---------------------------- Compute ----------------------------
-relP = np.linspace(0.01, 0.99, 500)
+GPU = 3.35e-10
 
-q1_mmolg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
-q2_mmolg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
+if mode == "Relative pressure (P/P0)":
+    relP = np.linspace(0.01, 0.99, 500)
 
-# --- 가스별 1회 자동 캘리브레이션 (참조점에서 scale 추정) ---
-ensure_gas_scale_once(gas1, gas2, q11, q12, b11, b12)
-ensure_gas_scale_once(gas2, gas1, q21, q22, b21, b22)
+    # --- DSL (b-기반이 있으면 그걸 사용; 없으면 기존 함수 사용) ---
+    try:
+        q1_mmolg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)  # if you have this
+        q2_mmolg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
+    except NameError:
+        q1_mmolg, dqdp1 = dsl_loading_and_slope(gas1, T, Pbar, relP, q11, q12, Q11, Q12)   # fallback
+        q2_mmolg, dqdp2 = dsl_loading_and_slope(gas2, T, Pbar, relP, q21, q22, Q21, Q22)
 
-Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mmolg, dqdp1, q2_mmolg)
-Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mmolg, dqdp2, q1_mmolg)
+    # --- (옵션) 자동 캘리브레이션 호출 (넣어두셨다면) ---
+    if 'ensure_gas_scale_once' in globals():
+        ensure_gas_scale_once(gas1, gas2, q11, q12, b11, b12) if 'b11' in globals() else None
+        ensure_gas_scale_once(gas2, gas1, q21, q22, b21, b22) if 'b21' in globals() else None
+
+    # --- Permeance series ---
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mmolg, dqdp1, q2_mmolg)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mmolg, dqdp2, q1_mmolg)
+    x_axis = relP
+    x_label = r"Relative pressure, $P/P_0$ (–)"
+
+else:
+    # ===== Transient (LDF) branch =====
+    # 1) 시간축 & 압력 스케줄
+    t = np.arange(0.0, t_end+dt, dt)
+    P_bar_t = pressure_schedule_series(t, P0bar, ramp, tau)
+    # relP(t) = P(t)/P0  (capillary 분기 등에서 rp를 쓰므로 만들어둠)
+    relP_t = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)
+
+    # 2) q_eq, dqdp_eq 콜백 준비 (각 가스)
+    def qeq_slope_cb_g1(Pbar_scalar):
+        relP_scalar = max(min(Pbar_scalar/float(Pbar), 0.9999), 1e-6)
+        try:
+            qv, dv = dsl_loading_and_slope_b(gas1, T, Pbar, np.array([relP_scalar]),
+                                             q11, q12, b11, b12)
+        except NameError:
+            qv, dv = dsl_loading_and_slope(gas1, T, Pbar, np.array([relP_scalar]),
+                                           q11, q12, Q11, Q12)
+        return float(qv[0]), float(dv[0])
+
+    def qeq_slope_cb_g2(Pbar_scalar):
+        relP_scalar = max(min(Pbar_scalar/float(Pbar), 0.9999), 1e-6)
+        try:
+            qv, dv = dsl_loading_and_slope_b(gas2, T, Pbar, np.array([relP_scalar]),
+                                             q21, q22, b21, b22)
+        except NameError:
+            qv, dv = dsl_loading_and_slope(gas2, T, Pbar, np.array([relP_scalar]),
+                                           q21, q22, Q21, Q22)
+        return float(qv[0]), float(dv[0])
+
+    # 3) LDF로 q_dyn(t) 적분 + dqdp_eq(t) 수집
+    q1_dyn, dqdp1_t = ldf_evolve_q(t, P_bar_t, qeq_slope_cb_g1, kLDF, q0=0.0)
+    q2_dyn, dqdp2_t = ldf_evolve_q(t, P_bar_t, qeq_slope_cb_g2, kLDF, q0=0.0)
+
+    # 4) 기존 permeance_series_SI를 그대로 사용 (rp에 relP_t, q에 q_dyn 주입)
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP_t, L_nm, q1_dyn, dqdp1_t, q2_dyn)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP_t, L_nm, q2_dyn, dqdp2_t, q1_dyn)
+
+    x_axis = t
+    x_label = "Time (s)"
+
+# 공통: 선택도 & GPU 변환
 Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2>0))
+Pi1_gpu = Pi1 / GPU
+Pi2_gpu = Pi2 / GPU
 
-rgba, mech_names = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP)
 
 # ---------------------------- Layout: Plots & Info ----------------------------
 colA, colB = st.columns([1,2])
@@ -358,8 +465,11 @@ with colB:
     y1 = Pi1 / GPU
     y2 = Pi2 / GPU
 
-    ax1.plot(relP, y1, label=f"{gas1}")
-    ax1.plot(relP, y2, '--', label=f"{gas2}")
+    # Permeance (GPU) plot
+    ax1.plot(x_axis, Pi1_gpu, label=f"{gas1}")
+    ax1.plot(x_axis, Pi2_gpu, '--', label=f"{gas2}")
+    ax1.set_ylabel(r"$\Pi$  (GPU)")
+    ax1.set_xlabel(x_label)
 
     ax1.set_ylabel(r"$\Pi$  (GPU)")
 
