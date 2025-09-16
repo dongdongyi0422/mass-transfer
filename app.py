@@ -401,6 +401,7 @@ with st.sidebar:
 
 # ---------------------------- Compute ----------------------------
 GPU = 3.35e-10
+time_mode = (mode == "Time (transient LDF)")
 
 if mode == "TIME":   # <-- UI에서 모드 선택
     t = np.arange(0.0, t_end + dt, dt)
