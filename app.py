@@ -66,6 +66,13 @@ TARGET_GPU = {
     "CO2": 150.0, "CH4": 40.0, "N2": 5.0, "H2": 200.0, "D2": 180.0, "He": 300.0,
 }
 
+# ================= Weighting mode toggle =================
+# "heuristic": 기존 방식 (휴리스틱)
+# "softmax"  : intrinsic permeance 기반 소프트맥스 가중치
+WEIGHT_MODE   = "softmax"   # ← 기본을 softmax로 쓰고 싶으면 이렇게
+SOFTMAX_GAMMA = 0.8         # 0.6~1.2 권장 (↑ 날카로움 증가)
+# =========================================================
+
 GAS_SCALE = {}
 GPU_UNIT  = 3.35e-10  # 1 GPU = 3.35e-10 mol m^-2 s^-1 Pa^-1
 
@@ -205,28 +212,71 @@ def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
     return "Surface"
 
 def mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_mkpa):
+    """
+    입력
+      gas, other : 가스명 (PARAMS에 존재)
+      T [K], P_bar [bar], pore_d_nm [nm], rp (=P/P0), dqdp_mkpa [mol/kg/Pa]
+    출력
+      w : dict (keys: "Blocked","Sieving","Knudsen","Surface","Capillary","Solution")
+          각 가중치의 합은 1 (normalize)
+    """
+    # 초기화
     w = {k: 0.0 for k in ["Blocked","Sieving","Knudsen","Surface","Capillary","Solution"]}
-    d1 = PARAMS[gas]["d"]; d2 = PARAMS[other]["d"]
-    dmin = min(d1, d2); pA = pore_d_nm * 10.0
-    lam  = mean_free_path_nm(T, P_bar, 0.5*(d1+d2))
+
+    d1 = PARAMS[gas]["d"]
+    d2 = PARAMS[other]["d"]
+    dmin = min(d1, d2)           # [Å]
+    pA   = pore_d_nm * 10.0      # [Å]
+    lam  = mean_free_path_nm(T, P_bar, 0.5*(d1+d2))  # [nm]
+
+    # 1) 완전 차단 근처
     if pA <= dmin - SIEVE_BAND_A:
-        w["Blocked"] = 1.0; return w
+        w["Blocked"] = 1.0
+        return w
+
+    # 2) 솔루션-확산(매우 작은 기공)
     if pore_d_nm <= SOL_TH_NM:
-        w["Solution"] = 1.0; return w
+        w["Solution"] = 1.0
+        return w
+
+    # 보조 sigmoid
     def sig(x, s=1.0): return 1.0/(1.0 + np.exp(-x/s))
+
+    # 3) Sieving
     w_sieve = np.exp(-((pA - dmin)/max(SIEVE_BAND_A,1e-6))**2)
+
+    # 4) Knudsen
     r = pore_d_nm / max(lam, 1e-9)
     w_kn = 1.0 / (1.0 + (r/0.5)**2)
-    w_cap = sig((pore_d_nm - 2.0)/0.2) * sig((rp - 0.5)/0.05)
-    alpha = 5e5
-    w_surf = 1.0 - np.exp(-alpha*max(float(dqdp_mkpa),0.0))
+
+    # 5) Capillary (문턱 강화)
+    w_cap_raw = sig((pore_d_nm - 2.0)/0.25) * sig((rp - 0.60)/0.06)
+
+    # 6) Surface (포화 완화 + Capillary와 상호 억제)
+    alpha = 5e4  # 기존보다 완화
+    s_base = 1.0 - np.exp(-alpha*max(float(dqdp_mkpa),0.0))
+    w_surf = s_base * (1.0 - 0.9*w_cap_raw)   # cap↑ → surface↓
+    w_cap  = w_cap_raw * (1.0 - 0.3*s_base)   # surface↑ → cap↓
+
+    # 7) Solution (경계 부근에서만 부드럽게 기여)
     w_sol = sig((SOL_TH_NM - pore_d_nm)/0.02)
-    w_blk = np.exp(-((dmin - pA)/max(SIEVE_BAND_A,1e-6))**2) if pA < dmin else 0.0
-    w.update({"Blocked":w_blk,"Sieving":w_sieve,"Knudsen":w_kn,"Surface":w_surf,"Capillary":w_cap,"Solution":w_sol})
+
+    # 8) Blocked (경계 완충)
+    if pA < dmin:
+        w_blk = np.exp(-((dmin - pA)/max(SIEVE_BAND_A,1e-6))**2)
+    else:
+        w_blk = 0.0
+
+    # 합치고 정규화
+    w.update({"Blocked":w_blk,"Sieving":w_sieve,"Knudsen":w_kn,
+              "Surface":w_surf,"Capillary":w_cap,"Solution":w_sol})
+
     s = sum(w.values())
     if s <= 1e-12:
-        w["Surface"] = 1.0; return w
-    for k in w: w[k] /= s
+        w["Surface"] = 1.0
+        return w
+    for k in w:
+        w[k] /= s
     return w
 
 def _series_parallel(Pp, Pd, eps=1e-30):
@@ -253,7 +303,12 @@ def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
             "Solution":  pintr_solution_SI(gas, T, L_m, dqdp_molkgPa[i]),
         }
         for k in Pi_intr: Pi_intr[k] *= GAS_SCALE.get(gas, 1.0)
-        w = mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_molkgPa[i])
+        # (2) 가중치 계산 (모드에 따라 선택)
+        if WEIGHT_MODE == "softmax":
+            w = weights_from_intrinsic(Pi_intr, gamma=SOFTMAX_GAMMA)
+        else:
+            w = mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_molkgPa[i])
+
         Pi_pore = w["Sieving"]*Pi_intr["Sieving"] + w["Knudsen"]*Pi_intr["Knudsen"] + w["Capillary"]*Pi_intr["Capillary"]
         Pi_diff = w["Surface"]*Pi_intr["Surface"] + w["Solution"]*Pi_intr["Solution"]
         Pi0_mix = _series_parallel(Pi_pore, Pi_diff)
@@ -290,6 +345,24 @@ def ensure_gas_scale_once(gas, other, q1, q2, b1, b2):
     target  = TARGET_GPU[gas]
     scale   = target / max(now_gpu, 1e-20)
     GAS_SCALE[gas] = float(np.clip(scale, 1e-3, 1e3))
+
+def weights_from_intrinsic(Pi_intr: dict, gamma: float = 0.8) -> dict:
+    """
+    Pi_intr: {"Blocked","Sieving","Knudsen","Surface","Capillary","Solution"}의 intrinsic Π(SI)
+    gamma  : 소프트맥스 감도. ↑(>1) 승자 독식, ↓(<1) 완만
+    """
+    import numpy as np
+    keys = ["Blocked","Sieving","Knudsen","Surface","Capillary","Solution"]
+    x = np.array([np.log(max(float(Pi_intr.get(k, 0.0)), 1e-30)) for k in keys], dtype=float)
+    e = np.exp(gamma * x)
+    s = float(e.sum())
+    if not np.isfinite(s) or s <= 0.0:
+        w = np.zeros_like(e); w[keys.index("Surface")] = 1.0
+    else:
+        w = e / s
+    return {k: float(w[i]) for i, k in enumerate(keys)}
+
+    
 
 # ---------------------------- Streamlit UI ----------------------------
 st.set_page_config(page_title="Membrane Permeance (SI)", layout="wide")
