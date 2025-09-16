@@ -317,10 +317,67 @@ def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
         Pi[i] = Pi0_mix * theta
     return Pi
 
-def mechanism_band_rgba(g1, g2, T, P_bar, d_nm, relP):
-    names = [classify_mechanism(d_nm, g1, g2, T, P_bar, r) for r in relP]
+def mechanism_band_rgba_time(g1, g2, T, P_bar, d_nm, L_nm,
+                             t_vec, P_bar_t, dqdp_series_g1):
+    """
+    시간축 밴드: 각 시각 t에서 intrinsic Π와 가중치(softmax/heuristic)를 계산해
+    가장 큰 메커니즘으로 색을 칠해 줍니다.
+    입력
+      - g1,g2: 가스명
+      - T, P_bar: 온도[K], 총압[bar] (분류/λ 계산 용)
+      - d_nm, L_nm: 기공 직경[nm], 두께[nm]
+      - t_vec: 시간 배열
+      - P_bar_t: 시간에 따른 압력[bar]
+      - dqdp_series_g1: 시간에 따른 ∂q/∂p (gas1) [mol/kg/Pa]
+    출력
+      - rgba: (1, N, 4) 색 배열
+      - names: 길이 N의 메커니즘 이름 리스트
+    """
+    L_m = max(float(L_nm), 1e-3) * 1e-9
+    M1  = PARAMS[g1]["M"]
+    # 상대압 rp(t) = P(t)/P0  (P0는 시간 모드 사이드바의 feed P0bar)
+    # UI 코드에서 이미 P0bar가 존재하므로 import 없이 전역 참조
+    rp_t = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)
+
+    names = []
+    for i in range(len(t_vec)):
+        rp     = float(rp_t[i])
+        dqdp_i = float(dqdp_series_g1[i])
+
+        Pi_intr = {
+            "Blocked":   PI_TINY,
+            "Sieving":   pintr_sieving_SI(d_nm, g1, T, L_m),
+            "Knudsen":   pintr_knudsen_SI(d_nm, T, M1, L_m),
+            "Surface":   pintr_surface_SI(d_nm, g1, T, L_m, dqdp_i),
+            "Capillary": pintr_capillary_SI(d_nm, rp, L_m),
+            "Solution":  pintr_solution_SI(g1, T, L_m, dqdp_i),
+        }
+
+        if WEIGHT_MODE == "softmax":
+            w = weights_from_intrinsic(Pi_intr, gamma=SOFTMAX_GAMMA)
+        else:
+            w = mechanism_weights(g1, g2, T, P_bar, d_nm, rp, dqdp_i)
+
+        names.append(max(w, key=w.get))
+
     rgba = np.array([to_rgba(MECH_COLOR[n]) for n in names])[None, :, :]
     return rgba, names
+
+# === Mechanism band (TIME) ===
+rgba, mech_names = mechanism_band_rgba_time(
+    gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1
+)
+figBand, axBand = plt.subplots(figsize=(9, 0.7))
+axBand.imshow(rgba, extent=(float(t[0]), float(t[-1]), 0, 1),
+              aspect='auto', origin='lower')
+axBand.set_yticks([])
+axBand.set_xlim(float(t[0]), float(t[-1]))
+axBand.set_xlabel("Time (s)")
+handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
+leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
+                    ncol=6, frameon=True)
+leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
+st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
 def intrinsic_pi0_SI(gas, other, T, Pbar, d_nm, L_nm, rp, dqdp_mkpa, q_mmolg):
     L_m = max(L_nm, 1e-3) * 1e-9
