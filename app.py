@@ -499,7 +499,6 @@ with colB:
     ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax1.get_yaxis().get_offset_text().set_visible(False)
 
-    ax1.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
     ax1.grid(True)
     ax1.legend(title="Permeance (GPU)")
     st.pyplot(fig1, use_container_width=True); plt.close(fig1)
@@ -512,7 +511,7 @@ with colB:
     ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax2.get_yaxis().get_offset_text().set_visible(False)
 
-    ax2.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
+    ax2.set_xlabel(x_label)
     ax2.grid(True); ax2.legend()
     st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
