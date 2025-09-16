@@ -327,26 +327,43 @@ Pi2_gpu  = Pi2 / GPU_UNIT
 # ========================= Layout =========================
 colA, colB = st.columns([1,2])
 
-with colB:
-    # === Mechanism map (weighted) ===
+    with colB:
+        # === Mechanism map (weighted) ===
     if time_mode:
         st.subheader("Mechanism map (over time)")
-        rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar)
-        figBand, axBand = plt.subplots(figsize=(9,0.7))
-        axBand.imshow(rgba, extent=(float(t[0]), float(t[-1]), 0, 1), aspect='auto', origin='lower')
+        rgba, _ = mechanism_band_rgba_time(
+            gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar
+        )
+
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(
+            rgba,
+            extent=(float(t[0]), float(t[-1]), 0, 1),   # ← 시간 범위(중요)
+            aspect="auto",
+            origin="lower",
+        )
         axBand.set_xlabel("Time (s)")
         axBand.set_xlim(float(t[0]), float(t[-1]))
         axBand.set_xticks(np.linspace(float(t[0]), float(t[-1]), 6))
+        axBand.set_yticks([])
+
     else:
         st.subheader("Mechanism map (along relative pressure)")
-        rgba, _ = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12)
-        figBand, axBand = plt.subplots(figsize=(9,0.7))
-        axBand.imshow(rgba, extent=(0,1,0,1), aspect='auto', origin='lower')
+        rgba, _ = mechanism_band_rgba(
+            gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
+        )
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(
+            rgba,
+            extent=(0, 1, 0, 1),                         # ← P/P0 범위
+            aspect="auto",
+            origin="lower",
+        )
         axBand.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-        axBand.set_xlim(0,1)
-        axBand.set_xticks([0,0.2,0.4,0.6,0.8,1.0])
+        axBand.set_xlim(0, 1)
+        axBand.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        axBand.set_yticks([])
 
-    axBand.set_yticks([])
     handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
     leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
                         ncol=6, frameon=True)
