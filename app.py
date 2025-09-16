@@ -324,8 +324,8 @@ with colB:
     # === Mechanism map (weighted) ===
     figBand, axBand = plt.subplots(figsize=(9, 0.7))
     rgba = (mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar)[0]
-            if time_mode else
-            mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12)[0])
+            if time_mode
+            else mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12)[0])
 
     axBand.imshow(
         rgba,
