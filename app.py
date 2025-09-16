@@ -323,31 +323,48 @@ colA,colB=st.columns([1,2])
 with colB:
     # === Mechanism map (weighted) ===
     figBand, axBand = plt.subplots(figsize=(9, 0.7))
-    rgba = (mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar)[0]
-            if time_mode
-            else mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12)[0])
 
-    axBand.imshow(
-        rgba,
-        extent=(x_min, x_max, 0, 1),   # ← 공통 범위 적용!
-        aspect="auto",
-        origin="lower",
-    )
-    axBand.set_xlabel(x_label_common)
-    axBand.set_xlim(x_min, x_max)
-    axBand.set_xticks(x_ticks_common)
+    if time_mode:
+        rgba, _ = mechanism_band_rgba_time(
+            gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar
+        )
+        axBand.imshow(
+            rgba,
+            extent=(float(t[0]), float(t[-1]), 0, 1),  # <- 시간 범위 적용
+            aspect="auto",
+            origin="lower",
+        )
+        axBand.set_xlabel("Time (s)")
+        axBand.set_xlim(float(t[0]), float(t[-1]))
+        axBand.set_xticks(np.linspace(float(t[0]), float(t[-1]), 6))
+    else:
+        rgba, _ = mechanism_band_rgba(
+            gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
+        )
+        axBand.imshow(
+            rgba,
+            extent=(0, 1, 0, 1),  # <- 상대 압력 범위
+            aspect="auto",
+            origin="lower",
+        )
+        axBand.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
+        axBand.set_xlim(0, 1)
+        axBand.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+
     axBand.set_yticks([])
-    # (범례 그대로)
 
-
-    # 범례 공통
+    # 범례는 공통
     handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
     leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
                         ncol=6, frameon=True)
-    leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
-    st.pyplot(figBand, use_container_width=True); plt.close(figBand)
+    leg.get_frame().set_alpha(0.85)
+    leg.get_frame().set_facecolor("white")
+
+    st.pyplot(figBand, use_container_width=True)
+    plt.close(figBand)
 
 
+   
     # === Permeance (GPU) ===
     fig1, ax1 = plt.subplots(figsize=(9, 3))
     ax1.plot(x_axis_common, Pi1 / GPU_UNIT, label=f"{gas1}")
