@@ -254,7 +254,7 @@ def mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_mkpa):
 
     # 6) Surface (포화 완화 + Capillary와 상호 억제)
     alpha = 5e4  # 기존보다 완화
-    s_base = 1.0 - np.exp(-alpha*max(float(dqdp_mkpa),0.0))
+    s_base = 1.0 - np.exp(-alpha*dq)
     w_surf = s_base * (1.0 - 0.9*w_cap_raw)   # cap↑ → surface↓
     w_cap  = w_cap_raw * (1.0 - 0.3*s_base)   # surface↑ → cap↓
 
@@ -511,6 +511,27 @@ else:
 Sel      = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2 > 0))
 Pi1_gpu  = Pi1 / GPU
 Pi2_gpu  = Pi2 / GPU
+
+# ===== Debug: mid-point weights 확인 =====
+mid = len(relP)//2
+rp_mid = float(relP[mid])
+dqdp_mid = float(dqdp1[mid])  # gas1 기준
+
+Pi_intr = {
+    "Blocked":   PI_TINY,
+    "Sieving":   pintr_sieving_SI(d_nm, gas1, T, L_nm*1e-9),
+    "Knudsen":   pintr_knudsen_SI(d_nm, T, PARAMS[gas1]["M"], L_nm*1e-9),
+    "Surface":   pintr_surface_SI(d_nm, gas1, T, L_nm*1e-9, dqdp_mid),
+    "Capillary": pintr_capillary_SI(d_nm, rp_mid, L_nm*1e-9),
+    "Solution":  pintr_solution_SI(gas1, T, L_nm*1e-9, dqdp_mid),
+}
+
+if WEIGHT_MODE == "softmax":
+    w = weights_from_intrinsic(Pi_intr, gamma=SOFTMAX_GAMMA)
+else:
+    w = mechanism_weights(gas1, gas2, T, Pbar, d_nm, rp_mid, dqdp_mid)
+
+st.write({"rp_mid": rp_mid, "weights": w})
 
 # ---------------------------- Layout: Plots & Info ----------------------------
 colA, colB = st.columns([1,2])
