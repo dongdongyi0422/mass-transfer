@@ -278,7 +278,7 @@ def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
     # 5) 그 외 → 표면 확산
     return "Surface"
 
-    def pressure_schedule_series(t, P0_bar, ramp, tau):
+def pressure_schedule_series(t, P0_bar, ramp, tau):
         """t[s]에서의 절대압력 [bar] 시계열 생성"""
         if ramp.startswith("Step"):
             P_bar_t = np.full_like(t, float(P0_bar))
@@ -286,7 +286,7 @@ def classify_mechanism(pore_d_nm, gas1, gas2, T, P_bar, rp):
             P_bar_t = P0_bar*(1.0 - np.exp(-t/float(tau)))
         return P_bar_t
 
-    def ldf_evolve_q(t, P_bar_t, q_eq_fn, kLDF, q0=0.0):
+def ldf_evolve_q(t, P_bar_t, q_eq_fn, kLDF, q0=0.0):
         """
         LDF: dq/dt = k*(q*(P) - q)
         q_eq_fn(P_bar)->(q_eq, dqdp_eq) 를 제공해야 함. (단위: q[mmol/g], dqdp[mol/kg/Pa])
@@ -411,7 +411,7 @@ def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
 
         # (2) 가중치
         w = mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp,
-                              dqdp_molkgPa[i], 0.0)
+                              dqdp_molkgPa[i])
 
         # (3) 직렬-병렬 혼합
         # 3-1) pore-like 그룹(공극 통과 경로)과 diffusion-like 그룹(흡착/확산 경로)으로 분리
