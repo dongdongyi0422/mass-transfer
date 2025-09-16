@@ -290,27 +290,114 @@ def pintr_solution_SI(gas, T, L_m, dqdp_molkgPa):
 
 def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
                         q_mmolg, dqdp_molkgPa, q_other_mmolg):
+    """
+    혼합 공존 모델:
+      1) 각 메커니즘 intrinsic Pi0 계산
+      2) 조건 기반 가중치 w_i 산출 (합=1)
+      3) Pi0_mix = sum_i w_i * Pi0_i
+      4) 경쟁흡착 점유율 theta 곱
+    """
     L_m = max(L_nm, 1e-3) * 1e-9
     M = PARAMS[gas]["M"]
     Pi = np.zeros_like(relP, float)
 
     for i, rp in enumerate(relP):
-        rule = classify_mechanism(pore_d_nm, gas, other, T, P_bar, rp)
-        if   rule == "Blocked":  Pi0 = PI_TINY
-        elif rule == "Sieving":  Pi0 = pintr_sieving_SI(pore_d_nm, gas, T, L_m)
-        elif rule == "Knudsen":  Pi0 = pintr_knudsen_SI(pore_d_nm, T, M, L_m)
-        elif rule == "Surface":  Pi0 = pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa[i])
-        elif rule == "Capillary":Pi0 = pintr_capillary_SI(pore_d_nm, rp, L_m)
-        elif rule == "Solution": Pi0 = pintr_solution_SI(gas, T, L_m, dqdp_molkgPa[i])
-        else:                    Pi0 = PI_TINY
+        # (1) 메커니즘별 intrinsic
+        Pi_intr = {
+            "Blocked":   PI_TINY,
+            "Sieving":   pintr_sieving_SI(pore_d_nm, gas, T, L_m),
+            "Knudsen":   pintr_knudsen_SI(pore_d_nm, T, M, L_m),
+            "Surface":   pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa[i]),
+            "Capillary": pintr_capillary_SI(pore_d_nm, rp, L_m),
+            "Solution":  pintr_solution_SI(gas, T, L_m, dqdp_molkgPa[i]),
+        }
+        # 가스별 보정 스케일 적용
+        for k in Pi_intr:
+            Pi_intr[k] *= GAS_SCALE.get(gas, 1.0)
 
-        Pi0 *= GAS_SCALE.get(gas, 1.0)
+        # (2) 가중치
+        w = mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp,
+                              dqdp_molkgPa[i], 0.0)
 
+        # (3) 직렬-병렬 혼합
+    # 3-1) pore-like 그룹(공극 통과 경로)과 diffusion-like 그룹(흡착/확산 경로)으로 분리
+    Pi_pore = (
+        w["Sieving"]  * Pi_intr["Sieving"]  +
+        w["Knudsen"]  * Pi_intr["Knudsen"]  +
+        w["Capillary"]* Pi_intr["Capillary"]
+    )
+
+    Pi_diff = (
+        w["Surface"]  * Pi_intr["Surface"]  +
+        w["Solution"] * Pi_intr["Solution"]
+    )
+
+    # 3-2) 직렬 저항 결합 (harmonic mean 형태)
+    #     1/Π_mix = 1/Π_pore + 1/Π_diff
+    eps = 1e-30  # 0 나눗셈 방지용 작은 값
+    if Pi_pore <= eps and Pi_diff <= eps:
+        Pi0_mix = PI_TINY
+    elif Pi_pore <= eps:
+        Pi0_mix = Pi_diff
+    elif Pi_diff <= eps:
+        Pi0_mix = Pi_pore
+    else:
+        Pi0_mix = 1.0 / ( (1.0/(Pi_pore + eps)) + (1.0/(Pi_diff + eps)) )
+
+
+        # (4) 경쟁흡착 점유율
         qi = q_mmolg[i]; qj = q_other_mmolg[i]
         theta = (qi/(qi+qj)) if (qi+qj) > 0 else 0.0
-        Pi[i] = Pi0 * theta
+
+        Pi[i] = Pi0_mix * theta
 
     return Pi
+
+
+def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
+                        q_mmolg, dqdp_molkgPa, q_other_mmolg):
+    """
+    혼합 공존 모델:
+      1) 각 메커니즘 intrinsic Pi0 계산
+      2) 조건 기반 가중치 w_i 산출 (합=1)
+      3) Pi0_mix = sum_i w_i * Pi0_i
+      4) 경쟁흡착 점유율 theta 곱
+    """
+    L_m = max(L_nm, 1e-3) * 1e-9
+    M = PARAMS[gas]["M"]
+    Pi = np.zeros_like(relP, float)
+
+    for i, rp in enumerate(relP):
+        # (1) 메커니즘별 intrinsic
+        Pi_intr = {
+            "Blocked":   PI_TINY,
+            "Sieving":   pintr_sieving_SI(pore_d_nm, gas, T, L_m),
+            "Knudsen":   pintr_knudsen_SI(pore_d_nm, T, M, L_m),
+            "Surface":   pintr_surface_SI(pore_d_nm, gas, T, L_m, dqdp_molkgPa[i]),
+            "Capillary": pintr_capillary_SI(pore_d_nm, rp, L_m),
+            "Solution":  pintr_solution_SI(gas, T, L_m, dqdp_molkgPa[i]),
+        }
+        # 가스별 보정 스케일 적용
+        for k in Pi_intr:
+            Pi_intr[k] *= GAS_SCALE.get(gas, 1.0)
+
+        # (2) 가중치
+        w = mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp,
+                              dqdp_molkgPa[i], 0.0)
+
+        # (3) 가중합
+        Pi0_mix = 0.0
+        for k in Pi_intr:
+            Pi0_mix += w[k] * Pi_intr[k]
+
+        # (4) 경쟁흡착 점유율
+        qi = q_mmolg[i]; qj = q_other_mmolg[i]
+        theta = (qi/(qi+qj)) if (qi+qj) > 0 else 0.0
+
+        Pi[i] = Pi0_mix * theta
+
+    return Pi
+
 
 def mechanism_band_rgba(g1, g2, T, P_bar, d_nm, relP):
     names = [classify_mechanism(d_nm, g1, g2, T, P_bar, r) for r in relP]
