@@ -333,7 +333,7 @@ else:
 
 
 # -------------------- layout --------------------
-colA,colB=st.columns([1,2])
+colA, colB = st.columns([1, 2])
 
 with colB:
     # === Mechanism map (weighted) ===
@@ -348,21 +348,16 @@ with colB:
             gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
         )
 
-    # ❗❗ 무조건 공통 X축을 쓴다 (시간이면 seconds, 압력이면 0~1)
-    axBand.imshow(
-        rgba,
-        extent=(X_min, X_max, 0, 1),
-        aspect="auto",
-        origin="lower",
-    )
+    # 메커니즘 바 x축 = 공통 X축
+    axBand.imshow(rgba, extent=(X_min, X_max, 0, 1), aspect="auto", origin="lower")
     axBand.set_xlabel(X_label)
     axBand.set_xlim(X_min, X_max)
     axBand.set_xticks(X_ticks)
     axBand.set_yticks([])
 
-    # 디버그: 플롯에 텍스트로 X범위 찍기 (잠깐만 켜두세요)
-    axBand.text(X_min, 0.5, f"{X_min:.2f}", va="center", ha="left", fontsize=8)
-    axBand.text(X_max, 0.5, f"{X_max:.2f}", va="center", ha="right", fontsize=8)
+    # (디버그 텍스트는 필요 시만)
+    # axBand.text(X_min, 0.5, f"{X_min:.2f}", va="center", ha="left", fontsize=8)
+    # axBand.text(X_max, 0.5, f"{X_max:.2f}", va="center", ha="right", fontsize=8)
 
     handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
     leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
@@ -370,9 +365,7 @@ with colB:
     leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
     st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
-
-   
-    # === Permeance (GPU) ===
+    # === Permeance (GPU) — 공통 X축 강제 적용 ===
     fig1, ax1 = plt.subplots(figsize=(9, 3))
     ax1.plot(X_vals, Pi1 / GPU_UNIT, label=f"{gas1}")
     ax1.plot(X_vals, Pi2 / GPU_UNIT, '--', label=f"{gas2}")
@@ -387,32 +380,21 @@ with colB:
     ax1.grid(True); ax1.legend(title="Permeance (GPU)")
     st.pyplot(fig1, use_container_width=True); plt.close(fig1)
 
-    # x축을 메커니즘 바와 동일하게
-    ax1.set_xlim(x_min, x_max)
-    ax1.set_xticks(x_ticks_common)
-    ax1.set_xlabel(x_label_common)
-
-    ax1.set_ylabel(r"$\Pi$ (GPU)")
-    ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
-    ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
-    ax1.get_yaxis().get_offset_text().set_visible(False)
-    ax1.grid(True); ax1.legend(title="Permeance (GPU)")
-
-
-    # Selectivity
-    st.subheader("Selectivity")
-    fig2,ax2=plt.subplots(figsize=(9,3))
-    ax2.plot(x_axis,Sel,label=f"{gas1}/{gas2}")
-    ax2.set_ylabel("Selectivity (–)"); ax2.set_xlabel(x_label)
-    ax2.ticklabel_format(axis='y',style='plain',useOffset=False)
+    # === Selectivity — 공통 X축 강제 적용 ===
+    fig2, ax2 = plt.subplots(figsize=(9, 3))
+    ax2.plot(X_vals, Sel, label=f"{gas1}/{gas2}")
+    ax2.set_xlim(X_min, X_max)
+    ax2.set_xticks(X_ticks)
+    ax2.set_xlabel(X_label)
+    ax2.set_ylabel("Selectivity (–)")
+    ax2.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax2.get_yaxis().get_offset_text().set_visible(False)
     ax2.grid(True); ax2.legend()
-    st.pyplot(fig2,use_container_width=True); plt.close(fig2)
+    st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
 with colA:
     st.subheader("Mechanism (rule) vs intrinsic (Gas1) — reference")
-    # 간단 룰(참조용)
     def classify_mech(d_nm,g1,g2,T,P_bar,rp):
         d1,d2=PARAMS[g1]["d"],PARAMS[g2]["d"]; dmin=min(d1,d2); pA=d_nm*10.0
         lam=mean_free_path_nm(T,P_bar,0.5*(d1+d2))
@@ -424,15 +406,24 @@ with colA:
         return "Surface"
 
     if time_mode:
-        rp_mid=float(np.clip(P_bar_t/float(P0bar),1e-6,0.9999)[len(t)//2])
+        rp_mid = float(np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)[len(t)//2])
     else:
-        rp_mid=float(relP[len(relP)//2])
-    L_m=L_nm*1e-9; M1=PARAMS[gas1]["M"]; dq_mid=float((dqdp1 if np.ndim(dqdp1)>0 else np.array([0.0]))[len(x_axis)//2])
-    cand={"Blocked":PI_TINY,
-          "Sieving":pintr_sieving_SI(d_nm,gas1,T,L_m),
-          "Knudsen":pintr_knudsen_SI(d_nm,T,M1,L_m),
-          "Surface":pintr_surface_SI(d_nm,gas1,T,L_m,dq_mid),
-          "Capillary":pintr_capillary_SI(d_nm,rp_mid,L_m),
-          "Solution":pintr_solution_SI(gas1,T,L_m,dq_mid)}
-    st.markdown(f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid)}`  "
-                f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`")
+        rp_mid = float(relP[len(relP)//2])
+
+    L_m = L_nm*1e-9; M1 = PARAMS[gas1]["M"]
+    # dqdp1은 위에서 이미 계산되어 있음. x축 길이 기준 인덱스 사용
+    mid_idx = len(X_vals)//2
+    dq_mid = float(dqdp1[mid_idx]) if np.ndim(dqdp1)>0 and len(dqdp1)>mid_idx else 0.0
+
+    cand = {
+        "Blocked":  PI_TINY,
+        "Sieving":  pintr_sieving_SI(d_nm, gas1, T, L_m),
+        "Knudsen":  pintr_knudsen_SI(d_nm, T, M1, L_m),
+        "Surface":  pintr_surface_SI(d_nm, gas1, T, L_m, dq_mid),
+        "Capillary":pintr_capillary_SI(d_nm, rp_mid, L_m),
+        "Solution": pintr_solution_SI(gas1, T, L_m, dq_mid),
+    }
+    st.markdown(
+        f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid)}`  "
+        f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
+    )
