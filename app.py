@@ -308,29 +308,52 @@ Pi1_gpu=Pi1/GPU_UNIT; Pi2_gpu=Pi2/GPU_UNIT
 colA,colB=st.columns([1,2])
 
 with colB:
-    # Mechanism map (THIS decides the x-axis)
+        # === Mechanism map (weighted) ===
     if time_mode:
         st.subheader("Mechanism map (over time)")
-        rgba,_=mechanism_band_rgba_time(gas1,gas2,T,Pbar,d_nm,L_nm,t,P_bar_t,dqdp1,P0bar)
-        figBand,axBand=plt.subplots(figsize=(9,0.7))
-        axBand.imshow(rgba, extent=(float(t[0]),float(t[-1]),0,1), aspect='auto', origin='lower')
+        # 시간축용 밴드 계산
+        rgba, _ = mechanism_band_rgba_time(
+            gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar
+        )
+
+        # ⬇⬇⬇ 시간축으로 꼭 이렇게 그립니다!
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(
+            rgba,
+            extent=(float(t[0]), float(t[-1]), 0, 1),  # <- x축: 시간 범위(초)
+            aspect="auto",
+            origin="lower",
+        )
         axBand.set_xlabel("Time (s)")
         axBand.set_xlim(float(t[0]), float(t[-1]))
+        # 보기 좋은 시간 눈금 6개
         axBand.set_xticks(np.linspace(float(t[0]), float(t[-1]), 6))
         axBand.set_yticks([])
+
     else:
         st.subheader("Mechanism map (along relative pressure)")
-        rgba,_=mechanism_band_rgba(gas1,gas2,T,Pbar,d_nm,relP,L_nm,q11,q12,b11,b12)
-        figBand,axBand=plt.subplots(figsize=(9,0.7))
-        axBand.imshow(rgba, extent=(0,1,0,1), aspect='auto', origin='lower')
+        rgba, _ = mechanism_band_rgba(
+            gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
+        )
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        axBand.imshow(
+            rgba,
+            extent=(0, 1, 0, 1),  # <- x축: P/P0
+            aspect="auto",
+            origin="lower",
+        )
         axBand.set_xlabel(r"Relative pressure, $P/P_0$ (–)")
-        axBand.set_xlim(0,1)
-        axBand.set_xticks([0,0.2,0.4,0.6,0.8,1.0])
+        axBand.set_xlim(0, 1)
+        axBand.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
         axBand.set_yticks([])
-    handles=[plt.Rectangle((0,0),1,1,fc=MECH_COLOR[n],ec='none',label=n) for n in MECH_ORDER]
-    leg=axBand.legend(handles=handles,loc="upper center",bbox_to_anchor=(0.5,-0.7),ncol=6,frameon=True)
+
+    # 범례 공통
+    handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
+    leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
+                        ncol=6, frameon=True)
     leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
-    st.pyplot(figBand,use_container_width=True); plt.close(figBand)
+    st.pyplot(figBand, use_container_width=True); plt.close(figBand)
+
 
     # Permeance (GPU)
     st.subheader("Permeance (GPU)")
