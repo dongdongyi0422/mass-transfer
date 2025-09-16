@@ -456,6 +456,7 @@ colA, colB = st.columns([1,2])
 
 with colB:
     st.subheader("Mechanism map (along relative pressure)")
+    rgba, mech_names = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP_plot)
     figBand, axBand = plt.subplots(figsize=(9, 0.7))
     axBand.imshow(rgba, extent=(0,1,0,1), aspect='auto', origin='lower')
     axBand.set_yticks([])
