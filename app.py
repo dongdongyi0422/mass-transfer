@@ -351,6 +351,15 @@ def mechanism_weights(gas, other, T, P_bar, pore_d_nm, rp, dqdp_mkpa):
         w[k] /= s
     return w
 
+def _series_parallel(Pp, Pd, eps=1e-30):
+    """직렬 저항 결합: 1/Π = 1/Πp + 1/Πd"""
+    if not np.isfinite(Pp): Pp = 0.0
+    if not np.isfinite(Pd): Pd = 0.0
+    if Pp <= eps and Pd <= eps: return PI_TINY
+    if Pp <= eps: return Pd
+    if Pd <= eps: return Pp
+    return 1.0 / ((1.0/(Pp+eps)) + (1.0/(Pd+eps)))
+
 def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
                         q_mmolg, dqdp_molkgPa, q_other_mmolg):
     """
@@ -383,18 +392,22 @@ def permeance_series_SI(pore_d_nm, gas, other, T, P_bar, relP, L_nm,
                               dqdp_molkgPa[i])
 
         # (3) 직렬-병렬 혼합
-        # 3-1) pore-like 그룹(공극 통과 경로)과 diffusion-like 그룹(흡착/확산 경로)으로 분리
-        Pi_pore = (
-            w["Sieving"]  * Pi_intr["Sieving"]  +
-            w["Knudsen"]  * Pi_intr["Knudsen"]  +
-            w["Capillary"]* Pi_intr["Capillary"]
-        )
+        try:
+            Pi_pore = (
+                w["Sieving"]   * Pi_intr["Sieving"]  +
+                w["Knudsen"]   * Pi_intr["Knudsen"]  +
+                w["Capillary"] * Pi_intr["Capillary"]
+            )
+            Pi_diff = (
+                w["Surface"]   * Pi_intr["Surface"]   +
+                w["Solution"]  * Pi_intr["Solution"]
+            )
+        except KeyError as e:
+            raise KeyError(f"mechanism_weights missing key {e}. w={w}")
 
-        Pi_diff = (
-            w["Surface"]  * Pi_intr["Surface"]  +
-            w["Solution"] * Pi_intr["Solution"]
-        )
+        Pi0_mix = _series_parallel(Pi_pore, Pi_diff)
 
+        
         # 3-2) 직렬 저항 결합 (harmonic mean 형태)
         #     1/Π_mix = 1/Π_pore + 1/Π_diff
         eps = 1e-30  # 0 나눗셈 방지용 작은 값
