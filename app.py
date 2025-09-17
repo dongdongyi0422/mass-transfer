@@ -33,8 +33,6 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, hel
     fmt = f"%.{int(decimals)}f"
     sld = st.slider(lab, float(vmin), float(vmax), float(cur), float(vstep),
                     key=f"{key}_s", help=help)
-    num = st.number_input("", float(vmin), float(vmax), float(cur), float(vstep),
-                          format=fmt, key=f"{key}_n")
     new = float(num) if num != cur else float(sld)
     new = float(np.clip(new, vmin, vmax))
     if new != cur:
