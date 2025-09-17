@@ -179,6 +179,51 @@ def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp_series_g
     rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
     return rgba, names
 
+def draw_mechanism_band(time_mode, gas1, gas2, T, Pbar, d_nm, L_nm,
+                        t, P_bar_t, dqdp1, P0bar,
+                        relP, q11, q12, b11, b12):
+    """
+    시간/압력 모드에 따라 x축을 '단 한 곳'에서 결정하고,
+    그걸 메커니즘 바에 강제로 적용.
+    """
+    # ---- 공통 X축을 '여기서' 최종 확정 ----
+    if time_mode:
+        X_vals  = t
+        X_label = "Time (s)"
+        X_min, X_max = float(t[0]), float(t[-1])
+        X_ticks = np.linspace(X_min, X_max, 6)
+        rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm,
+                                           t, P_bar_t, dqdp1, P0bar)
+    else:
+        X_vals  = relP
+        X_label = r"Relative pressure, $P/P_0$ (–)"
+        X_min, X_max = 0.0, 1.0
+        X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        rgba, _ = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm,
+                                      relP, L_nm, q11, q12, b11, b12)
+
+    # ---- 그리기 ----
+    fig, ax = plt.subplots(figsize=(9, 0.7))
+    ax.imshow(rgba, extent=(X_min, X_max, 0, 1), aspect="auto", origin="lower")
+    ax.set_xlabel(X_label)
+    ax.set_xlim(X_min, X_max)
+    ax.set_xticks(X_ticks)
+    ax.set_yticks([])
+
+    # 범례
+    handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
+    leg = ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
+                    ncol=6, frameon=True)
+    leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
+
+    # 디버그(잠깐만 확인용): 실제 xlim 출력
+    st.write({"DBG_mech_xlim": tuple(map(float, ax.get_xlim()))})
+    st.pyplot(fig, use_container_width=True); plt.close(fig)
+
+    # 강제 가드: 시간 모드인데도 0~1로 남아 있으면 즉시 경고
+    if time_mode and abs(X_max - 1.0) < 1e-9:
+        st.error("Time mode인데 메커니즘 바 x축이 0–1로 잡혔습니다. 이 블록 외의 메커니즘 바 그리는 코드가 남아있는지 확인하세요.")
+
 # -------------------- transient LDF --------------------
 def pressure_schedule_series(t,P0_bar,ramp,tau):
     if isinstance(ramp,str) and ramp.lower().startswith("step"):
@@ -349,62 +394,43 @@ else:
 colA, colB = st.columns([1, 2])
 
 with colB:
-    # === Mechanism map (weighted) ===
-    figBand, axBand = plt.subplots(figsize=(9, 0.7))
+    # === Mechanism map (weighted, forced X-axis) ===
+    draw_mechanism_band(time_mode, gas1, gas2, T, Pbar, d_nm, L_nm,
+                        t if time_mode else np.array([0.0, 1.0]),   # 시간 모드 아니면 더미
+                        P_bar_t if time_mode else np.array([1.0, 1.0]),
+                        dqdp1 if time_mode else np.array([0.0, 0.0]),
+                        P0bar if time_mode else Pbar,
+                        relP if not time_mode else np.array([0.0, 1.0]),
+                        q11, q12, b11, b12)
 
+    # 공통 X축 다시 계산 (메커니즘 바와 동일 로직)
     if time_mode:
-        rgba, _ = mechanism_band_rgba_time(
-            gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar
-        )
+        X_vals, X_label = t, "Time (s)"
+        X_min, X_max = float(t[0]), float(t[-1]); X_ticks = np.linspace(X_min, X_max, 6)
     else:
-        rgba, _ = mechanism_band_rgba(
-            gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
-        )
+        X_vals, X_label = relP, r"Relative pressure, $P/P_0$ (–)"
+        X_min, X_max = 0.0, 1.0; X_ticks = [0,0.2,0.4,0.6,0.8,1.0]
 
-    # 공통 X축 강제 (시간이면 초 범위)
-    axBand.imshow(rgba, extent=(X_min, X_max, 0, 1), aspect="auto", origin="lower")
-    axBand.set_xlabel(X_label)
-    axBand.set_xlim(X_min, X_max)
-    axBand.set_xticks(X_ticks)
-    axBand.set_yticks([])
-
-    # 디버그: 실제 적용된 xlim 확인 (잠깐만 켜두세요)
-    st.write({"DBG_xlim_band": axBand.get_xlim()})
-
-    handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
-    leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
-                        ncol=6, frameon=True)
-    leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
-    st.pyplot(figBand, use_container_width=True); plt.close(figBand)
-
-    # === Permeance (GPU) — 공통 X축 사용 ===
-    fig1, ax1 = plt.subplots(figsize=(9, 3))
-    ax1.plot(X_vals, Pi1 / GPU_UNIT, label=f"{gas1}")
-    ax1.plot(X_vals, Pi2 / GPU_UNIT, '--', label=f"{gas2}")
-    ax1.set_xlim(X_min, X_max)
-    ax1.set_xticks(X_ticks)
-    ax1.set_xlabel(X_label)
-    ax1.set_ylabel(r"$\Pi$ (GPU)")
-    from matplotlib.ticker import ScalarFormatter
+    # Permeance
+    fig1, ax1 = plt.subplots(figsize=(9,3))
+    ax1.plot(X_vals, Pi1/GPU_UNIT, label=f"{gas1}")
+    ax1.plot(X_vals, Pi2/GPU_UNIT, '--', label=f"{gas2}")
+    ax1.set_xlim(X_min, X_max); ax1.set_xticks(X_ticks); ax1.set_xlabel(X_label)
+    ax1.set_ylabel(r"$\Pi$ (GPU)"); ax1.grid(True); ax1.legend(title="Permeance (GPU)")
     ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax1.get_yaxis().get_offset_text().set_visible(False)
-    ax1.grid(True); ax1.legend(title="Permeance (GPU)")
     st.pyplot(fig1, use_container_width=True); plt.close(fig1)
 
-    # === Selectivity — 공통 X축 사용 ===
-    fig2, ax2 = plt.subplots(figsize=(9, 3))
+    # Selectivity
+    fig2, ax2 = plt.subplots(figsize=(9,3))
     ax2.plot(X_vals, Sel, label=f"{gas1}/{gas2}")
-    ax2.set_xlim(X_min, X_max)
-    ax2.set_xticks(X_ticks)
-    ax2.set_xlabel(X_label)
-    ax2.set_ylabel("Selectivity (–)")
+    ax2.set_xlim(X_min, X_max); ax2.set_xticks(X_ticks); ax2.set_xlabel(X_label)
+    ax2.set_ylabel("Selectivity (–)"); ax2.grid(True); ax2.legend()
     ax2.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax2.get_yaxis().get_offset_text().set_visible(False)
-    ax2.grid(True); ax2.legend()
     st.pyplot(fig2, use_container_width=True); plt.close(fig2)
-
 
 
 with colA:
