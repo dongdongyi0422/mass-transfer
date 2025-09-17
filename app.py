@@ -1,8 +1,7 @@
-# app.py — Membrane Transport Simulator (SI)
-# - Mechanism band: weighted (softmax/heuristic)
-# - Time mode: mechanism band x-axis = Time (s)
-# - DSL: (q1,q2,b1,b2) direct
-# - Permeance shown in GPU
+# app.py — Membrane Transport Simulator (SI) + de Broglie quantum sieving
+# - Mechanism band uses common X-axis (time or P/P0)
+# - de Broglie wavelength -> effective molecular diameter: d_eff = d_geom + alpha * λ(T)
+# - DSL (q1,q2,b1,b2) direct; Permeance shown in GPU
 
 import numpy as np
 import matplotlib
@@ -13,7 +12,11 @@ from matplotlib.colors import to_rgba
 from matplotlib.ticker import ScalarFormatter
 
 # -------------------- constants / globals --------------------
-R = 8.314
+R = 8.314462618  # J/mol/K
+NA = 6.02214076e23
+h  = 6.62607015e-34  # J s
+kB = 1.380649e-23    # J/K
+
 GPU_UNIT = 3.35e-10
 PI_TINY = 1e-14
 
@@ -31,7 +34,7 @@ DELTA_SOFT_A = 0.50
 PI_SOFT_REF  = 1e-6
 
 # weighting
-WEIGHT_MODE   = "heuristic"   # "softmax" or "heuristic"
+WEIGHT_MODE   = "softmax"   # "softmax" or "heuristic"
 SOFTMAX_GAMMA = 0.8
 DAMP_KNUDSEN  = True
 DAMP_FACTOR   = 1e-3
@@ -55,9 +58,22 @@ MECH_COLOR = {
     "Surface":"#e31a1c","Capillary":"#ff7f00","Solution":"#6a3d9a"
 }
 
+# -------------------- quantum helpers --------------------
+def lambda_deBroglie(gas, T):
+    """Thermal de Broglie wavelength (m) using m = M/NA"""
+    m = PARAMS[gas]["M"] / NA  # kg per molecule
+    # Common thermal de Broglie: λ = h / sqrt(2π m k_B T)
+    return h / np.sqrt(2.0*np.pi*m*kB*T)
+
+def eff_diameter_A(gas, T, alpha_qs):
+    """Effective diameter in Å: d_eff = d_geom + alpha * λ(T); λ converted to Å"""
+    d_geom_A = PARAMS[gas]["d"]
+    lam_A = lambda_deBroglie(gas, T) * 1e10  # m -> Å
+    return float(d_geom_A + alpha_qs * lam_A)
+
 # -------------------- physics helpers --------------------
 def mean_free_path_nm(T, P_bar, d_ang):
-    kB=1.380649e-23; P=P_bar*1e5; d=d_ang*1e-10
+    P = P_bar*1e5; d = d_ang*1e-10
     return (kB*T/(np.sqrt(2)*np.pi*d*d*P))*1e9
 
 def pintr_knudsen_SI(d_nm, T, M, L_m):
@@ -65,8 +81,11 @@ def pintr_knudsen_SI(d_nm, T, M, L_m):
     Dk = (2/3)*r*np.sqrt((8*R*T)/(np.pi*M))
     return Dk/(L_m*R*T)
 
-def pintr_sieving_SI(d_nm, gas, T, L_m):
-    dA = PARAMS[gas]["d"]; pA = d_nm*10.0; delta = dA - pA
+def pintr_sieving_SI(d_nm, d_eff_A, gas, T, L_m):
+    """Use d_eff_A (Å) instead of geometric diameter"""
+    dA = d_eff_A
+    pA = d_nm*10.0
+    delta = dA - pA
     if delta > 0:
         return max(PI_SOFT_REF*np.exp(-(delta/DELTA_SOFT_A)**2)*np.exp(-E_SIEVE/(R*T)), PI_TINY)
     x=max(1-(dA/pA)**2,0.0); f=x**2
@@ -115,23 +134,27 @@ def weights_from_intrinsic(Pi_intr, gamma=SOFTMAX_GAMMA):
     w=e/s if s>0 and np.isfinite(s) else np.array([0,0,0,1,0,0],float)
     return {k:float(w[i]) for i,k in enumerate(keys)}
 
-def mechanism_weights(gas,other,T,P_bar,d_nm,rp,dqdp):
-    d1=PARAMS[gas]["d"]; d2=PARAMS[other]["d"]; dmin=min(d1,d2)
-    pA=d_nm*10.0; lam=mean_free_path_nm(T,P_bar,0.5*(d1+d2))
+def mechanism_weights(g1,g2,T,P_bar,d_nm,rp,dqdp,alpha_qs):
+    # Use quantum-corrected effective diameters
+    d1_eff = eff_diameter_A(g1, T, alpha_qs)
+    d2_eff = eff_diameter_A(g2, T, alpha_qs)
+    dmin = min(d1_eff, d2_eff)
+    pA = d_nm*10.0
+    lam_nm = mean_free_path_nm(T, P_bar, 0.5*(d1_eff+d2_eff))
     if pA<=dmin-SIEVE_BAND_A:
         return {"Blocked":1.0,"Sieving":0.0,"Knudsen":0.0,"Surface":0.0,"Capillary":0.0,"Solution":0.0}
     if d_nm<=SOL_TH_NM:
         return {"Blocked":0.0,"Sieving":0.0,"Knudsen":0.0,"Surface":0.0,"Capillary":0.0,"Solution":1.0}
     def sig(x,s=1.0): return 1/(1+np.exp(-x/s))
     w_sieve=np.exp(-((pA-dmin)/max(SIEVE_BAND_A,1e-6))**2)
-    r=d_nm/max(lam,1e-9); w_kn=1/(1+(r/0.5)**2)
+    r=d_nm/max(lam_nm,1e-9); w_kn=1/(1+(r/0.5)**2)
     w_cap_raw=sig((d_nm-2.0)/0.25)*sig((rp-0.60)/0.06)
     alpha=5e4; s_base=1-np.exp(-alpha*max(float(dqdp),0.0))
     w_surf=s_base*(1-0.9*w_cap_raw); w_cap=w_cap_raw*(1-0.3*s_base)
     w_sol=sig((SOL_TH_NM-d_nm)/0.02)
     w_blk=np.exp(-((dmin-pA)/max(SIEVE_BAND_A,1e-6))**2) if pA<dmin else 0.0
     w={"Blocked":w_blk,"Sieving":w_sieve,"Knudsen":w_kn,"Surface":w_surf,"Capillary":w_cap,"Solution":w_sol}
-    s=sum(w.values()); 
+    s=sum(w.values())
     return {k:v/s for k,v in w.items()} if s>1e-12 else {"Blocked":0,"Sieving":0,"Knudsen":0,"Surface":1,"Capillary":0,"Solution":0}
 
 def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
@@ -140,55 +163,72 @@ def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
     return Pi_intr
 
 # -------------------- bands --------------------
-def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12):
+def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha_qs):
     _,dv = dsl_loading_and_slope_b(g1,T,P_bar,relP,q11,q12,b11,b12)
     L_m=max(float(L_nm),1e-3)*1e-9; M1=PARAMS[g1]["M"]
+    d1_eff = eff_diameter_A(g1, T, alpha_qs)
+    d2_eff = eff_diameter_A(g2, T, alpha_qs)
     names=[]
     for i,rp in enumerate(relP):
         dq=float(dv[i])
         Pi_intr={
             "Blocked":PI_TINY,
-            "Sieving":pintr_sieving_SI(d_nm,g1,T,L_m),
+            "Sieving":pintr_sieving_SI(d_nm,d1_eff,g1,T,L_m),
             "Knudsen":pintr_knudsen_SI(d_nm,T,M1,L_m),
             "Surface":pintr_surface_SI(d_nm,g1,T,L_m,dq),
             "Capillary":pintr_capillary_SI(d_nm,float(rp),L_m),
             "Solution":pintr_solution_SI(g1,T,L_m,dq),
         }
         Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,float(rp))
-        w=weights_from_intrinsic(Pi_intr) if WEIGHT_MODE=="softmax" else mechanism_weights(g1,g2,T,P_bar,d_nm,float(rp),dq)
+        if WEIGHT_MODE=="softmax":
+            w=weights_from_intrinsic(Pi_intr)
+        else:
+            w=mechanism_weights(g1,g2,T,P_bar,d_nm,float(rp),dq,alpha_qs)
+        # Hard geometric block gate to match rule when pore < dmin
+        dmin = min(d1_eff, d2_eff); pA = d_nm*10.0
+        if pA <= dmin - SIEVE_BAND_A:
+            names.append("Blocked"); continue
         names.append(max(w,key=w.get))
     rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
     return rgba, names
 
-def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp_g1,P0bar):
+def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp_g1,P0bar,alpha_qs):
     L_m=max(float(L_nm),1e-3)*1e-9; M1=PARAMS[g1]["M"]
     rp_t=np.clip(P_bar_t/float(P0bar),1e-6,0.9999)
+    d1_eff = eff_diameter_A(g1, T, alpha_qs)
+    d2_eff = eff_diameter_A(g2, T, alpha_qs)
     names=[]
     for i in range(len(t_vec)):
         rp=float(rp_t[i]); dq=float(dqdp_g1[i])
         Pi_intr={
             "Blocked":PI_TINY,
-            "Sieving":pintr_sieving_SI(d_nm,g1,T,L_m),
+            "Sieving":pintr_sieving_SI(d_nm,d1_eff,g1,T,L_m),
             "Knudsen":pintr_knudsen_SI(d_nm,T,M1,L_m),
             "Surface":pintr_surface_SI(d_nm,g1,T,L_m,dq),
             "Capillary":pintr_capillary_SI(d_nm,rp,L_m),
             "Solution":pintr_solution_SI(g1,T,L_m,dq),
         }
         Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,rp)
-        w=weights_from_intrinsic(Pi_intr) if WEIGHT_MODE=="softmax" else mechanism_weights(g1,g2,T,P_bar,d_nm,rp,dq)
+        if WEIGHT_MODE=="softmax":
+            w=weights_from_intrinsic(Pi_intr)
+        else:
+            w=mechanism_weights(g1,g2,T,P_bar,d_nm,rp,dq,alpha_qs)
+        dmin = min(d1_eff, d2_eff); pA = d_nm*10.0
+        if pA <= dmin - SIEVE_BAND_A:
+            names.append("Blocked"); continue
         names.append(max(w,key=w.get))
     rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
     return rgba, names
 
 def draw_mechanism_band(time_mode, X_min, X_max, X_ticks, X_label,
-                        gas1, gas2, T, Pbar, d_nm, L_nm,
+                        gas1, gas2, T, Pbar, d_nm, L_nm, alpha_qs,
                         t, P_bar_t, dqdp1, P0bar,
                         relP, q11, q12, b11, b12):
-    """Draw mechanism band with the already-finalized common X-axis."""
+    """Draw mechanism band with the finalized common X-axis."""
     if time_mode:
-        rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar)
+        rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar, alpha_qs)
     else:
-        rgba, _ = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12)
+        rgba, _ = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12, alpha_qs)
 
     fig, ax = plt.subplots(figsize=(9, 0.7))
     ax.imshow(rgba, extent=(X_min, X_max, 0, 1), aspect="auto", origin="lower")
@@ -221,20 +261,25 @@ def ldf_evolve_q(t,P_bar_t,qeq_fn,kLDF,q0=0.0):
     return q_dyn, dqdp
 
 # -------------------- mix model --------------------
-def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q_other):
+def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q_other, alpha_qs):
     L_m=max(L_nm,1e-3)*1e-9; M=PARAMS[gas]["M"]
+    d_eff = eff_diameter_A(gas, T, alpha_qs)
+    d_other_eff = eff_diameter_A(other, T, alpha_qs)
     Pi=np.zeros_like(relP,float)
     for i,rp in enumerate(relP):
         Pi_intr={
             "Blocked":PI_TINY,
-            "Sieving":pintr_sieving_SI(d_nm,gas,T,L_m),
+            "Sieving":pintr_sieving_SI(d_nm,d_eff,gas,T,L_m),
             "Knudsen":pintr_knudsen_SI(d_nm,T,M,L_m),
             "Surface":pintr_surface_SI(d_nm,gas,T,L_m,dqdp[i]),
             "Capillary":pintr_capillary_SI(d_nm,rp,L_m),
             "Solution":pintr_solution_SI(gas,T,L_m,dqdp[i]),
         }
         Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,rp)
-        w=weights_from_intrinsic(Pi_intr) if WEIGHT_MODE=="softmax" else mechanism_weights(gas,other,T,P_bar,d_nm,rp,dqdp[i])
+        if WEIGHT_MODE=="softmax":
+            w=weights_from_intrinsic(Pi_intr)
+        else:
+            w=mechanism_weights(gas,other,T,P_bar,d_nm,rp,dqdp[i],alpha_qs)
         Pi_pore = w["Sieving"]*Pi_intr["Sieving"] + w["Knudsen"]*Pi_intr["Knudsen"] + w["Capillary"]*Pi_intr["Capillary"]
         Pi_diff = w["Surface"]*Pi_intr["Surface"] + w["Solution"]*Pi_intr["Solution"]
         Pi0=_series_parallel(Pi_pore, Pi_diff)
@@ -243,8 +288,8 @@ def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q
     return Pi
 
 # -------------------- UI --------------------
-st.set_page_config(page_title="Membrane Permeance", layout="wide")
-st.title("Membrane Transport Simulator")
+st.set_page_config(page_title="Membrane Permeance (SI)", layout="wide")
+st.title("Membrane Transport Simulator (SI units) — with de Broglie correction")
 
 with st.sidebar:
     st.header("Global Conditions")
@@ -259,14 +304,17 @@ with st.sidebar:
         if new!=cur: st.session_state[key]=new
         return st.session_state[key]
 
-    T    = nudged_slider("Temperature",10.0,600.0,1.0,450.0,key="T",unit="K")
-    Pbar = nudged_slider("Total Pressure",0.1,10.0,0.1,5.0,key="Pbar",unit="bar")
-    d_nm = nudged_slider("Pore diameter",0.01,50.0,0.01,2.45,key="d_nm",unit="nm")
+    T    = nudged_slider("Temperature",10.0,600.0,1.0,300.0,key="T",unit="K")
+    Pbar = nudged_slider("Total Pressure",0.1,10.0,0.1,1.0,key="Pbar",unit="bar")
+    d_nm = nudged_slider("Pore diameter",0.01,50.0,0.01,0.40,key="d_nm",unit="nm")
     L_nm = nudged_slider("Membrane thickness",10.0,100000.0,1.0,100.0,key="L_nm",unit="nm")
 
+    # Quantum sieving strength (0 ⇒ off)
+    alpha_qs = nudged_slider("Quantum sieving α", 0.0, 1.0, 0.01, 0.35, key="alpha_qs", unit="×λ(T)", decimals=2)
+
     gases=list(PARAMS.keys())
-    gas1=st.selectbox("Gas1 (numerator)",gases,index=gases.index("CO2"))
-    gas2=st.selectbox("Gas2 (denominator)",gases,index=gases.index("CH4"))
+    gas1=st.selectbox("Gas1 (numerator)",gases,index=gases.index("H2"))
+    gas2=st.selectbox("Gas2 (denominator)",gases,index=gases.index("D2"))
 
     st.header("DSL parameters (q1,q2,b1,b2)")
     st.subheader("Gas1")
@@ -281,7 +329,7 @@ with st.sidebar:
     b21=nudged_slider("b1 Gas2",1e-10,1e-1,1e-8,5e-7,key="b21",unit="Pa⁻¹",decimals=8)
     b22=nudged_slider("b2 Gas2",1e-10,1e-1,1e-8,2e-7,key="b22",unit="Pa⁻¹",decimals=8)
 
-    mode = st.radio("X-axis / Simulation mode",["Relative pressure (P/P0)","Time (transient LDF)"],index=1)
+    mode = st.radio("X-axis / Simulation mode",["Relative pressure (P/P0)","Time (transient LDF)"],index=0)
 
     if mode=="Time (transient LDF)":
         st.subheader("Transient (LDF) settings")
@@ -316,17 +364,17 @@ if time_mode:
     q1_dyn, dqdp1 = ldf_evolve_q(t, P_bar_t, qeq_g1, kLDF, q0=0.0)
     q2_dyn, dqdp2 = ldf_evolve_q(t, P_bar_t, qeq_g2, kLDF, q0=0.0)
 
-    # Permeance over time
-    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn)
-    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn)
+    # Permeance over time (alpha_qs propagates)
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn, alpha_qs)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn, alpha_qs)
 
 else:
     relP = np.linspace(0.01, 0.99, 500)
     q1_mg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
     q2_mg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
 
-    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mg, dqdp1, q2_mg)
-    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mg, dqdp2, q1_mg)
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mg, dqdp1, q2_mg, alpha_qs)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mg, dqdp2, q1_mg, alpha_qs)
 
 Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2 > 0))
 Pi1_gpu, Pi2_gpu = Pi1 / GPU_UNIT, Pi2 / GPU_UNIT
@@ -347,10 +395,10 @@ else:
 colA, colB = st.columns([1, 2])
 
 with colB:
-    st.subheader("Mechanism map")
+    st.subheader("Mechanism map (weighted)")
     draw_mechanism_band(
         time_mode, X_min, X_max, X_ticks, X_label,
-        gas1, gas2, T, Pbar, d_nm, L_nm,
+        gas1, gas2, T, Pbar, d_nm, L_nm, alpha_qs,
         t if time_mode else None,
         P_bar_t if time_mode else None,
         dqdp1 if time_mode else None,
@@ -384,9 +432,11 @@ with colB:
 
 with colA:
     st.subheader("Mechanism (rule) vs intrinsic (Gas1) — reference")
-    def classify_mech(d_nm,g1,g2,T,P_bar,rp):
-        d1,d2=PARAMS[g1]["d"],PARAMS[g2]["d"]; dmin=min(d1,d2); pA=d_nm*10.0
-        lam=mean_free_path_nm(T,P_bar,0.5*(d1+d2))
+    def classify_mech(d_nm,g1,g2,T,P_bar,rp,alpha_qs):
+        d1_eff = eff_diameter_A(g1, T, alpha_qs)
+        d2_eff = eff_diameter_A(g2, T, alpha_qs)
+        dmin=min(d1_eff,d2_eff); pA=d_nm*10.0
+        lam=mean_free_path_nm(T,P_bar,0.5*(d1_eff+d2_eff))
         if pA<=dmin-SIEVE_BAND_A: return "Blocked"
         if d_nm<=SOL_TH_NM: return "Solution"
         if (pA>=dmin+DELTA_A) and (d_nm<0.5*lam): return "Knudsen"
@@ -402,24 +452,21 @@ with colA:
         dq_mid = float(dqdp1[len(relP)//2])
 
     L_m = L_nm*1e-9; M1 = PARAMS[gas1]["M"]
+    # Intrinsic (mid point) with quantum-corrected diameter in sieving only
+    d1_eff = eff_diameter_A(gas1, T, alpha_qs)
     cand = {
         "Blocked":  PI_TINY,
-        "Sieving":  pintr_sieving_SI(d_nm, gas1, T, L_m),
+        "Sieving":  pintr_sieving_SI(d_nm, d1_eff, gas1, T, L_m),
         "Knudsen":  pintr_knudsen_SI(d_nm, T, M1, L_m),
         "Surface":  pintr_surface_SI(d_nm, gas1, T, L_m, dq_mid),
         "Capillary":pintr_capillary_SI(d_nm, rp_mid, L_m),
         "Solution": pintr_solution_SI(gas1, T, L_m, dq_mid),
     }
     st.markdown(
-        f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid)}`  "
+        f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid,alpha_qs)}`  "
         f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
     )
 
-    st.subheader("Intrinsic permeance (no competition) at mid P/P₀")
-    for mech, val in cand.items():
-        st.write(f"{mech}: {val:.3e} mol m⁻² s⁻¹ Pa⁻¹")
-
-
 st.markdown("---")
-st.caption("Permeance in SI is converted to GPU for visualization. "
-           "Capillary/Sieving are calibrated proxies. Surface/Solution terms use DSL slope (∂q/∂p) via ρ_eff.")
+st.caption("de Broglie-based quantum sieving: d_eff = d_geom + α·λ(T). "
+           "Set α=0 to disable quantum correction. Permeance in SI is converted to GPU.")
