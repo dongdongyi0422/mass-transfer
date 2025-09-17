@@ -268,22 +268,6 @@ with st.sidebar:
         ramp =st.selectbox("Pressure schedule P(t)",["Step (P=P₀)","Exp ramp: P₀(1-exp(-t/τ))"],index=1)
         tau  =nudged_slider("τ (only for exp ramp)",1e-3,1000.0,1e-3,5.0,key="tau",unit="s")
 
-        # === Common X axis (single source of truth) ===
-        if time_mode:
-            X_vals  = t
-            X_label = "Time (s)"
-            X_min, X_max = float(t[0]), float(t[-1])
-            X_ticks = np.linspace(X_min, X_max, 6)
-        else:
-            X_vals  = relP
-            X_label = r"Relative pressure, $P/P_0$ (–)"
-            X_min, X_max = 0.0, 1.0
-            X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-
-        # 디버그(잠깐만 켜두세요)
-        st.write({"DBG_x": {"time_mode": time_mode, "X_min": X_min, "X_max": X_max}})
-
-
 time_mode = (mode == "Time (transient LDF)")
 
 # === Common X axis (단 하나의 진실) ===
@@ -331,6 +315,22 @@ else:
 
 Sel = np.divide(Pi1,Pi2,out=np.zeros_like(Pi1),where=(Pi2>0))
 Pi1_gpu=Pi1/GPU_UNIT; Pi2_gpu=Pi2/GPU_UNIT
+
+# === Common X axis (single source of truth) — compute 끝난 직후 ===
+if time_mode:
+    X_vals  = t
+    X_label = "Time (s)"
+    X_min, X_max = float(t[0]), float(t[-1])
+    X_ticks = np.linspace(X_min, X_max, 6)
+else:
+    X_vals  = relP
+    X_label = r"Relative pressure, $P/P_0$ (–)"
+    X_min, X_max = 0.0, 1.0
+    X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+# (선택) 디버그: 최종 확정된 X범위 확인
+st.write({"DBG_x_final": {"time_mode": time_mode, "X_min": X_min, "X_max": X_max}})
+
 
 # ==== 공통 X축 정의 (둘 다 여기만 봅니다) ====
 if time_mode:
