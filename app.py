@@ -415,6 +415,11 @@ with colA:
         f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
     )
 
+    st.subheader("Intrinsic permeance (no competition) at mid P/P₀")
+    for mech, val in cand.items():
+        st.write(f"{mech}: {val:.3e} mol m⁻² s⁻¹ Pa⁻¹")
+
+
 st.markdown("---")
 st.caption("Permeance in SI is converted to GPU for visualization. "
            "Capillary/Sieving are calibrated proxies. Surface/Solution terms use DSL slope (∂q/∂p) via ρ_eff.")
