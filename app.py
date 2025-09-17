@@ -420,153 +420,228 @@ def run_gas_membrane():
         )
         st.caption("Mechanism band uses softmax weights over intrinsic permeances. α uses de Broglie scaling.")
 
-# =================================================================================
-# MODE 2 — ION MEMBRANE (GHK + Donnan; steady-state, binary z=±1)
-# =================================================================================
+# ============================== ADD BELOW YOUR GAS CODE ==============================
+# (No changes needed above. Paste from here.)
 
-def donnan_potential_side(c_bulk, z, Cf, K=1.0, T=298.15):
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
+import streamlit as st
+
+R  = 8.314462618   # J/mol/K
+F  = 96485.33212   # C/mol
+
+# ---------- Small UI helper (same style as your gas UI) ----------
+def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, help=None):
+    if key not in st.session_state:
+        st.session_state[key] = float(vinit)
+    cur = float(st.session_state[key])
+    lab = f"{label}{(' ['+unit+']') if unit else ''}"
+    fmt = f"%.{int(decimals)}f"
+    sld = st.slider(lab, float(vmin), float(vmax), float(cur), float(vstep),
+                    key=f"{key}_s", help=help)
+    num = st.number_input("", float(vmin), float(vmax), float(cur), float(vstep),
+                          format=fmt, key=f"{key}_n")
+    new = float(num) if num != cur else float(sld)
+    new = float(np.clip(new, vmin, vmax))
+    if new != cur:
+        st.session_state[key] = new
+    return st.session_state[key]
+
+# ====================================================================================
+# MODE 2 — ION MEMBRANE (multi-ion, GHK + Donnan, steady-state)
+# ====================================================================================
+
+# Diffusivities ~25 °C (in water, infinite dilution) — typical values
+ION_DB = {
+    # cations (pick ≤5)
+    "Na+":   {"z": +1, "D": 1.33e-9},
+    "K+":    {"z": +1, "D": 1.96e-9},
+    "Li+":   {"z": +1, "D": 1.03e-9},
+    "Ca2+":  {"z": +2, "D": 0.79e-9},
+    "Mg2+":  {"z": +2, "D": 0.706e-9},
+    # anions (pick ≤5)
+    "Cl-":       {"z": -1, "D": 2.03e-9},
+    "NO3-":      {"z": -1, "D": 1.90e-9},
+    "SO4^2-":    {"z": -2, "D": 1.065e-9},
+    "HCO3-":     {"z": -1, "D": 1.18e-9},
+    "Acetate-":  {"z": -1, "D": 1.09e-9},
+}
+
+def donnan_potential_general(c_bulk, z_map, K_map, Cf, T):
     """
-    Solve Donnan potential Δψ that satisfies electroneutrality inside membrane:
-      sum_i z_i c_i,m + Cf = 0 with c_i,m = K*c_i,bulk*exp(-z_i F Δψ / RT)
-    For binary z=+1, -1 electrolyte (e.g., NaCl). Returns Δψ [V]
+    Solve Donnan ψ that enforces electroneutrality in the membrane-side boundary:
+       sum_i z_i * K_i * c_i,bulk * exp(-z_i F ψ / RT) + Cf = 0
+    c_bulk: dict species-> mol/m^3 (bulk at that side)
+    Returns ψ [V]
     """
-    c_plus, c_minus = c_bulk  # mol/m3
-    z_plus, z_minus = z       # (+1, -1)
-    # Solve f(psi) = z+ c+ K e^{-z+ F ψ/RT} + z- c- K e^{-z- F ψ/RT} + Cf = 0
-    def f(psi):
+    def f_psi(psi):
         t = -F*psi/(R*T)
-        cp = K*c_plus*np.exp(-z_plus*t)
-        cm = K*c_minus*np.exp(-z_minus*t)
-        return z_plus*cp + z_minus*cm + Cf
+        s = 0.0
+        for sp, cb in c_bulk.items():
+            z = z_map[sp]; K = K_map.get(sp, 1.0)
+            s += z * K * cb * np.exp(-z*t)
+        return s + Cf
+
     # Newton
     psi = 0.0
-    for _ in range(60):
+    for _ in range(80):
         t = -F*psi/(R*T)
-        cp = K*c_plus*np.exp(-z_plus*t)
-        cm = K*c_minus*np.exp(-z_minus*t)
-        val = z_plus*cp + z_minus*cm + Cf
-        dval = (F/(R*T))*(z_plus**2*cp + z_minus**2*cm)
-        step = -val/(dval+1e-30)
+        s = 0.0; ds = 0.0
+        for sp, cb in c_bulk.items():
+            z = z_map[sp]; K = K_map.get(sp, 1.0)
+            val = K*cb*np.exp(-z*t)
+            s  += z * val
+            ds += (F/(R*T))*(z**2) * val
+        g = s + Cf
+        step = -g/(ds + 1e-30)
         psi += step
-        if abs(step) < 1e-10:
+        if abs(step) < 1e-12:
             break
     return psi
 
 def ghk_flux(Pi, z, Cin, Cout, dV, T):
     """
-    Goldman-Hodgkin-Katz flux for species i (constant field):
-      J_i = P_i * (z_i^2 F^2 dV / (R T)) * (Cin - Cout*exp(-z_i F dV/RT)) / (1 - exp(-z_i F dV/RT))
-    Units: P_i [m/s] here set from D_eff/L; returns mol m^-2 s^-1 (since multiply by concentration)
+    GHK flux with constant field:
+      J_i = P_i * (z^2 F^2 dV / (R T)) * (Cin - Cout*exp(-z F dV / R T)) / (1 - exp(-z F dV / R T))
+    If dV≈0, reduces to P_i*(Cin-Cout).
+    P_i in m/s, C in mol/m^3 → J in mol m^-2 s^-1
     """
-    z_i = z
     if abs(dV) < 1e-12:
-        # limit to simple Fick (no field)
         return Pi*(Cin - Cout)
-    a = -z_i*F*dV/(R*T)
+    a = -z*F*dV/(R*T)
     num = Cin - Cout*np.exp(a)
     den = 1.0 - np.exp(a)
-    return Pi*(z_i*z_i*(F**2)*dV/(R*T))*(num/(den+1e-30))
+    return Pi*((z*z)*(F**2)*dV/(R*T))*(num/(den+1e-30))
 
 def run_ion_membrane():
-    st.header("Ion-Exchange / NF Membrane Simulator (Binary, steady)")
+    st.header("Ion-Exchange/NF Membrane (Multi-ion, steady state)")
 
+    # Sidebar — membrane/operating
     with st.sidebar:
-        st.subheader("Operating / Membrane")
+        st.subheader("Membrane & Operation")
         T = nudged_slider("Temperature", 273.15, 350.0, 1.0, 298.15, key="T_i", unit="K")
-        L_nm = nudged_slider("Active layer thickness", 10.0, 5000.0, 1.0, 200.0, key="Lnm_i", unit="nm")
-        eps  = nudged_slider("Porosity (ε)", 0.05, 0.8, 0.01, 0.30, key="eps_i", unit="–")
-        tau  = nudged_slider("Tortuosity (τ)", 1.0, 5.0, 0.1, 2.0, key="tau_i", unit="–")
-        Cf   = nudged_slider("Fixed charge density (C_f)", -3000.0, 3000.0, 50.0, -500.0,
-                             key="Cf_i", unit="mol/m³", help="Negative for cation-exchange; positive for anion-exchange")
+        Lnm = nudged_slider("Active layer thickness", 10.0, 5000.0, 1.0, 200.0, key="L_i", unit="nm")
+        eps = nudged_slider("Porosity ε", 0.05, 0.8, 0.01, 0.30, key="eps_i", unit="–")
+        tau = nudged_slider("Tortuosity τ", 1.0, 5.0, 0.1, 2.0, key="tau_i", unit="–")
+        Cf  = st.slider("Fixed charge C_f", -3000.0, 3000.0, -500.0, 10.0, key="Cf_i")  # mol/m^3
+        dV  = st.slider("Membrane potential drop dV", -0.2, 0.2, 0.0, 0.005, key="dV_i") # V
+        v_s = st.slider("Solvent velocity inside v", -1e-6, 1e-6, 0.0, 1e-7, key="vsolv_i",
+                        help="Optional convective term v·C_avg added to each ion flux")
 
-        st.subheader("Electrolyte (monovalent)")
-        # Most common: NaCl
-        Dp = nudged_slider("D⁺ (Na⁺) in water", 0.5e-9, 3.0e-9, 0.1e-9, 1.33e-9, key="Dp_i", unit="m²/s", decimals=10)
-        Dm = nudged_slider("D⁻ (Cl⁻) in water", 0.5e-9, 3.0e-9, 0.1e-9, 2.03e-9, key="Dm_i", unit="m²/s", decimals=10)
-        Kp = nudged_slider("Partition K⁺", 0.1, 5.0, 0.05, 1.0, key="Kp_i", unit="–")
-        Km = nudged_slider("Partition K⁻", 0.1, 5.0, 0.05, 1.0, key="Km_i", unit="–")
+        st.subheader("Select ions (≤5 cations, ≤5 anions)")
+        all_cations = [k for k in ION_DB if ION_DB[k]["z"]>0]
+        all_anions  = [k for k in ION_DB if ION_DB[k]["z"]<0]
+        sel_cat = st.multiselect("Cations", all_cations, default=["Na+","K+","Ca2+","Li+","Mg2+"], key="sel_cat_i")
+        sel_an  = st.multiselect("Anions",  all_anions,  default=["Cl-","NO3-","SO4^2-","HCO3-","Acetate-"], key="sel_an_i")
 
-        st.subheader("Feed / Permeate bulk")
-        c_feed = nudged_slider("Feed NaCl conc.", 1.0, 5000.0, 1.0, 100.0, key="cfeed_i", unit="mol/m³")
-        c_perm = nudged_slider("Permeate NaCl conc.", 0.0, 5000.0, 1.0, 10.0, key="cperm_i", unit="mol/m³")
-        dV = st.slider("Applied potential (feed→perm)", -0.2, 0.2, 0.0, 0.005, key="dV_i")
-        vsolv = st.slider("Solvent flow (Darcy) inside", -1e-6, 1e-6, 0.0, 1e-7, key="vsolv_i",
-                          help="Optional convective solvent velocity [m/s] (often ~0 in diffusion-dominated tests)")
+        if len(sel_cat)>5:
+            st.warning("Cations >5 → 앞 5개만 사용합니다.")
+            sel_cat = sel_cat[:5]
+        if len(sel_an)>5:
+            st.warning("Anions >5 → 앞 5개만 사용합니다.")
+            sel_an = sel_an[:5]
 
-    L = st.session_state["Lnm_i"]*1e-9
-    De_p = st.session_state["Dp_i"] * st.session_state["eps_i"]/st.session_state["tau_i"]
-    De_m = st.session_state["Dm_i"] * st.session_state["eps_i"]/st.session_state["tau_i"]
-    Pp = De_p / L   # m/s
-    Pm = De_m / L
+        st.subheader("Bulk concentrations (mol/m³)")
+        c_feed = {}
+        c_perm = {}
+        for sp in sel_cat+sel_an:
+            c_feed[sp] = st.number_input(f"{sp} feed", min_value=0.0, value=100.0, step=1.0, key=f"cf_{sp}")
+            c_perm[sp] = st.number_input(f"{sp} permeate", min_value=0.0, value=10.0, step=1.0, key=f"cp_{sp}")
 
-    # Donnan at both sides (bulk → membrane-side concentrations)
-    z = ( +1, -1 )
-    c_feed_pair = ( st.session_state["cfeed_i"], st.session_state["cfeed_i"] )
-    c_perm_pair = ( st.session_state["cperm_i"], st.session_state["cperm_i"] )
+        st.subheader("Partition K_i and D_i (editable)")
+        K_map = {}
+        D_map = {}
+        for sp in sel_cat+sel_an:
+            K_map[sp] = st.number_input(f"K {sp}", min_value=0.01, value=1.0, step=0.01, key=f"K_{sp}")
+            D_default = float(ION_DB[sp]["D"])
+            D_map[sp] = st.number_input(f"D {sp} [m²/s]", min_value=1e-11, value=D_default, step=1e-11, format="%.2e", key=f"D_{sp}")
 
-    psi_f = donnan_potential_side(c_feed_pair, z, st.session_state["Cf_i"], K=1.0, T=st.session_state["T_i"])
-    psi_p = donnan_potential_side(c_perm_pair, z, st.session_state["Cf_i"], K=1.0, T=st.session_state["T_i"])
+    # Effective permeability P_i = (D_i * ε / τ) / L
+    L = Lnm*1e-9
+    P_map = {sp: (D_map[sp]*eps/max(tau,1e-9))/max(L,1e-12) for sp in (sel_cat+sel_an)}
+    z_map = {sp: int(ION_DB[sp]["z"]) for sp in (sel_cat+sel_an)}
 
-    # Membrane-side boundary concentrations with partitioning
-    Cp_f = st.session_state["Kp_i"]*c_feed_pair[0]*np.exp(-(+1)*F*psi_f/(R*st.session_state["T_i"]))
-    Cm_f = st.session_state["Km_i"]*c_feed_pair[1]*np.exp(-(-1)*F*psi_f/(R*st.session_state["T_i"]))
-    Cp_p = st.session_state["Kp_i"]*c_perm_pair[0]*np.exp(-(+1)*F*psi_p/(R*st.session_state["T_i"]))
-    Cm_p = st.session_state["Km_i"]*c_perm_pair[1]*np.exp(-(-1)*F*psi_p/(R*st.session_state["T_i"]))
+    # Donnan potentials at both sides
+    psi_f = donnan_potential_general(c_feed, z_map, K_map, Cf, T)
+    psi_p = donnan_potential_general(c_perm, z_map, K_map, Cf, T)
 
-    # Fluxes via GHK + optional convection term v*C_avg
-    Jp = ghk_flux(Pp, +1, Cp_f, Cp_p, st.session_state["dV_i"], st.session_state["T_i"]) + st.session_state["vsolv_i"]*(0.5*(Cp_f+Cp_p))
-    Jm = ghk_flux(Pm, -1, Cm_f, Cm_p, st.session_state["dV_i"], st.session_state["T_i"]) + st.session_state["vsolv_i"]*(0.5*(Cm_f+Cm_p))
+    # Membrane-side boundary conc.
+    Cm_f = {}
+    Cm_p = {}
+    for sp in (sel_cat+sel_an):
+        z = z_map[sp]
+        Cm_f[sp] = K_map[sp]*c_feed[sp]*np.exp(-(z*F*psi_f)/(R*T))
+        Cm_p[sp] = K_map[sp]*c_perm[sp]*np.exp(-(z*F*psi_p)/(R*T))
 
-    # Net current density (should be ~0 if electroneutral steady transport; nonzero → polarization)
-    i_net = F*(+1*Jp + (-1)*Jm)
+    # Fluxes (GHK + optional convection)
+    J = {}
+    for sp in (sel_cat+sel_an):
+        z = z_map[sp]
+        J_ghk = ghk_flux(P_map[sp], z, Cm_f[sp], Cm_p[sp], dV, T)
+        J_conv = v_s*0.5*(Cm_f[sp]+Cm_p[sp])
+        J[sp] = J_ghk + J_conv
 
+    i_net = F*sum(z_map[sp]*J[sp] for sp in (sel_cat+sel_an))  # A/m²
+
+    # ---- Display
     col1, col2 = st.columns([1,2])
     with col1:
-        st.subheader("Results (steady)")
-        st.metric("Na⁺ flux J₊", f"{Jp:.3e} mol m⁻² s⁻¹")
-        st.metric("Cl⁻ flux J₋", f"{Jm:.3e} mol m⁻² s⁻¹")
+        st.subheader("Global results")
         st.metric("Net current density", f"{i_net:.3e} A m⁻²")
-        st.caption("참고: 전류가 0에 가까울수록 전하수송이 균형. dV=0이면 확산 지배, dV≠0이면 전이동 지배가 증가.")
+        st.caption("전류가 0에 가까울수록 전하수송 균형. dV, C_f, K_i, D_i로 조절해 보세요.")
 
-        st.subheader("Membrane-side boundary conc.")
-        st.write(f"Feed-side:  c₊={Cp_f:.1f},  c₋={Cm_f:.1f}  (mol/m³)")
-        st.write(f"Perm-side:  c₊={Cp_p:.1f},  c₋={Cm_p:.1f}  (mol/m³)")
-        st.caption("Donnan 평형 + 분배계수 K 적용값")
+        st.subheader("Membrane-side concentrations")
+        for sp in (sel_cat+sel_an):
+            st.write(f"{sp}: feed-side {Cm_f[sp]:.1f}, perm-side {Cm_p[sp]:.1f}  (mol/m³)")
 
     with col2:
-        # Visualize concentration jump and driving
-        xs = np.array([0, L])
-        # simple linear profile sketch (for viz only)
-        Cp_prof = np.linspace(Cp_f, Cp_p, 50)
-        Cm_prof = np.linspace(Cm_f, Cm_p, 50)
-        x_prof  = np.linspace(0, L*1e6, 50)  # μm
-
+        # Bar chart of fluxes
+        species = sel_cat + sel_an
+        vals = [J[s] for s in species]
         fig, ax = plt.subplots(figsize=(8,3))
-        ax.plot(x_prof, Cp_prof, label="c₊ (Na⁺)")
-        ax.plot(x_prof, Cm_prof, '--', label="c₋ (Cl⁻)")
-        ax.set_xlabel("x (μm)"); ax.set_ylabel("c (mol/m³)")
-        ax.grid(True); ax.legend()
+        ax.bar(range(len(species)), vals)
+        ax.set_xticks(range(len(species))); ax.set_xticklabels(species, rotation=0)
+        ax.set_ylabel("Flux J (mol m⁻² s⁻¹)")
+        ax.grid(True, axis='y')
         st.pyplot(fig, use_container_width=True); plt.close(fig)
 
-# =================================================================================
-# MODE 3 — DRUG IN BLOOD VESSEL (1D ADR + Taylor dispersion + wall leakage)
-# =================================================================================
+# ====================================================================================
+# MODE 3 — DRUG IN VESSEL (1D ADR + Taylor dispersion + wall leakage, transient)
+# ====================================================================================
+
+# 10 common drugs (rough, order-of-magnitude defaults @ 37°C-ish)
+DRUG_DB = {
+    "Caffeine":        {"Db": 6.5e-10, "Pv": 2.0e-6, "kel": 1.0e-4},
+    "Acetaminophen":   {"Db": 6.0e-10, "Pv": 1.5e-6, "kel": 8.0e-5},
+    "Ibuprofen":       {"Db": 5.0e-10, "Pv": 8.0e-7, "kel": 1.0e-4},
+    "Dopamine":        {"Db": 6.0e-10, "Pv": 1.2e-6, "kel": 1.2e-4},
+    "Fluorescein":     {"Db": 4.5e-10, "Pv": 6.0e-7, "kel": 6.0e-5},
+    "Glucose":         {"Db": 6.7e-10, "Pv": 1.0e-6, "kel": 7.0e-5},
+    "Vancomycin":      {"Db": 2.5e-10, "Pv": 1.0e-7, "kel": 5.0e-5},
+    "Doxorubicin":     {"Db": 3.0e-10, "Pv": 2.0e-7, "kel": 8.0e-5},
+    "Insulin":         {"Db": 1.8e-10, "Pv": 5.0e-8, "kel": 3.0e-5},
+    "Albumin":         {"Db": 0.7e-10, "Pv": 1.0e-8, "kel": 2.0e-5},
+}
 
 def run_vascular_drug():
     st.header("Drug Transport in a Vessel (1D ADR, transient)")
+
     with st.sidebar:
         st.subheader("Geometry & Flow")
         Rv_um = nudged_slider("Vessel radius", 2.0, 100.0, 1.0, 4.0, key="Rv_um_v", unit="μm")
         L_mm  = nudged_slider("Segment length", 1.0, 200.0, 1.0, 20.0, key="Lv_mm_v", unit="mm")
-        U = nudged_slider("Mean velocity U", 0.1e-3, 20e-3, 0.1e-3, 1.0e-3, key="U_v", unit="m/s",
-                          help="~1 mm/s in 모세혈관")
-        st.subheader("Drug / Mass Transfer")
-        Db = nudged_slider("Molecular diffusion in plasma D_b", 1e-11, 2e-9, 1e-11, 6e-10, key="Db_v", unit="m²/s", decimals=12)
-        Pv = nudged_slider("Endothelial permeability P_v", 1e-9, 1e-5, 1e-9, 1e-6, key="Pv_v", unit="m/s", decimals=12)
-        kelim = nudged_slider("First-order systemic elimination k", 0.0, 2e-3, 1e-5, 1e-4, key="kel_v", unit="s⁻¹", decimals=6)
+        U     = nudged_slider("Mean velocity U", 0.1e-3, 20e-3, 0.1e-3, 1.0e-3, key="U_v", unit="m/s",
+                              help="~1 mm/s in capillaries")
+
+        st.subheader("Drug & Mass Transfer")
+        drug = st.selectbox("Drug (defaults loaded)", list(DRUG_DB.keys()), index=0, key="drug_v")
+        Db   = st.number_input("D_b [m²/s]", value=DRUG_DB[drug]["Db"], format="%.2e", key="Db_v")
+        Pv   = st.number_input("P_v [m/s]",   value=DRUG_DB[drug]["Pv"], format="%.2e", key="Pv_v")
+        kel  = st.number_input("k_elim [s⁻¹]", value=DRUG_DB[drug]["kel"], format="%.2e", key="kel_v")
 
         st.subheader("Inlet profile")
-        C0 = nudged_slider("Reference conc. C₀", 0.0, 5.0, 0.01, 1.0, key="C0_v", unit="mol/m³")
+        C0   = nudged_slider("Reference conc. C₀", 0.0, 5.0, 0.01, 1.0, key="C0_v", unit="mol/m³")
         pulse = st.selectbox("Profile", ["Bolus (Gaussian)","Constant infusion"], index=0, key="pulse_v")
         t_end = nudged_slider("Sim time", 0.1, 600.0, 0.1, 60.0, key="tend_v", unit="s")
         dt    = nudged_slider("Δt", 1e-3, 0.5, 1e-3, 0.01, key="dt_v", unit="s")
@@ -578,12 +653,12 @@ def run_vascular_drug():
     dx = x[1]-x[0]
     t  = np.arange(0.0, t_end+dt, dt)
 
-    # Taylor–Aris dispersion (axis-averaged)
+    # Taylor–Aris dispersion
     Pe_r = U*Rv/Db
     Deff = Db*(1.0 + (Pe_r**2)/192.0)
 
-    # wall leakage as first-order loss: k_leak = 2*Pv/R
-    k_leak = 2.0*Pv/Rv
+    # wall leakage as first-order loss
+    k_leak = 2.0*Pv/max(Rv,1e-12)
 
     # inlet profile
     if pulse == "Bolus (Gaussian)":
@@ -593,37 +668,29 @@ def run_vascular_drug():
     else:
         Cin_t = C0*np.ones_like(t)
 
-    # Explicit upwind for advection, central for diffusion (CFL check)
+    # explicit scheme (upwind advection + central diffusion)
     C = np.zeros((len(t), Nx), dtype=float)
     C[0,:] = 0.0
 
     lam_a = U*dt/dx
     lam_d = Deff*dt/(dx*dx)
-    if lam_a>1.0:
-        st.warning(f"Advection CFL>1 (UΔt/Δx={lam_a:.2f}). Consider reducing Δt or increasing Nx.")
-    if lam_d>0.5:
-        st.warning(f"Diffusion number>0.5 (D_effΔt/Δx²={lam_d:.2f}). Consider smaller Δt.")
+    if lam_a>1.0: st.warning(f"Advection CFL>1 (UΔt/Δx={lam_a:.2f}). Reduce Δt or increase Nx.")
+    if lam_d>0.5: st.warning(f"Diffusion number>0.5 (D_effΔt/Δx²={lam_d:.2f}). Use smaller Δt.")
 
     for n in range(1, len(t)):
         Cn = C[n-1,:].copy()
         Cnp = Cn.copy()
-
-        # inlet boundary (Dirichlet)
+        # inlet
         Cnp[0] = Cin_t[n]
-
         # interior
-        # advection (upwind) + diffusion (central) + reaction (leak + systemic)
-        adv = -lam_a*(Cn[1:]-Cn[:-1])
+        adv = -lam_a*(Cn[1:] - Cn[:-1])
         dif = lam_d*(np.roll(Cn,-1)[1:-1] - 2*Cn[1:-1] + Cn[0:-2])
-        react = -dt*(k_leak + kelim)*Cn[1:-1]
+        react = -dt*(k_leak + kel)*Cn[1:-1]
         Cnp[1:-1] = Cn[1:-1] + adv[:-1] + dif + react
-
-        # outlet: convective (Neumann zero-gradient)
+        # outlet (convective/Neumann)
         Cnp[-1] = Cnp[-2]
-
         C[n,:] = np.maximum(Cnp, 0.0)
 
-    # outlet trace
     Cout_t = C[:, -1]
 
     col1, col2 = st.columns([1,2])
@@ -632,10 +699,8 @@ def run_vascular_drug():
         st.metric("Pe_r = UR/D_b", f"{Pe_r:.2f}")
         st.metric("D_eff", f"{Deff:.3e} m²/s")
         st.metric("k_leak = 2P_v/R", f"{k_leak:.3e} s⁻¹")
-        st.caption("Taylor–Aris 분산과 벽 누출(일차손실)을 포함한 축방향 평균 모델")
 
     with col2:
-        # Space-time heatmap
         fig, ax = plt.subplots(figsize=(8,3))
         im = ax.imshow(C.T, aspect='auto', origin='lower',
                        extent=(t[0], t[-1], x[0]*1e3, x[-1]*1e3))
@@ -643,26 +708,24 @@ def run_vascular_drug():
         cb = plt.colorbar(im, ax=ax); cb.set_label("C (mol/m³)")
         st.pyplot(fig, use_container_width=True); plt.close(fig)
 
-        # Outlet time trace
         fig2, ax2 = plt.subplots(figsize=(8,3))
         ax2.plot(t, Cout_t, label="Outlet")
         ax2.set_xlabel("t (s)"); ax2.set_ylabel("C_out (mol/m³)")
         ax2.grid(True); ax2.legend()
         st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
-# =================================================================================
-# App shell — Mode selection
-# =================================================================================
-
-st.set_page_config(page_title="Unified Transport Simulators", layout="wide")
-st.title("Unified Transport Simulators (SI)")
-
+# ====================================================================================
+# MODE SWITCH — add the two new modes alongside your Gas membrane
+# ====================================================================================
+st.markdown("---")
 mode_main = st.sidebar.radio("Select simulation",
                              ["Gas membrane", "Ion membrane", "Drug in vessel"],
-                             index=0)
+                             index=0, key="mode_main_all")
 
 if mode_main == "Gas membrane":
-    run_gas_membrane()
+    # call YOUR existing gas runner if you wrapped it, else do nothing (your plots already render)
+    # Example if you have run_gas_membrane(): run_gas_membrane()
+    pass
 elif mode_main == "Ion membrane":
     run_ion_membrane()
 else:
