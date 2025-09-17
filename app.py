@@ -285,6 +285,18 @@ with st.sidebar:
 
 time_mode = (mode == "Time (transient LDF)")
 
+# === Common X axis (단 하나의 진실) ===
+if time_mode:
+    X_vals  = t
+    X_label = "Time (s)"
+    X_min, X_max = float(t[0]), float(t[-1])
+    X_ticks = np.linspace(X_min, X_max, 6)
+else:
+    X_vals  = relP
+    X_label = r"Relative pressure, $P/P_0$ (–)"
+    X_min, X_max = 0.0, 1.0
+    X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
 # -------------------- compute --------------------
 if time_mode:
     t=np.arange(0.0,t_end+dt,dt)
@@ -335,6 +347,23 @@ else:
 # -------------------- layout --------------------
 colA, colB = st.columns([1, 2])
 
+# === 공통 X축 정의 (이미 있음) ===
+if time_mode:
+    X_vals  = t
+    X_label = "Time (s)"
+    X_min, X_max = float(t[0]), float(t[-1])
+    X_ticks = np.linspace(X_min, X_max, 6)
+else:
+    X_vals  = relP
+    X_label = r"Relative pressure, $P/P_0$ (–)"
+    X_min, X_max = 0.0, 1.0
+    X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+# 디버그용: 지금 x축이 어떻게 잡혀 있는지 확인
+st.write({"DBG": {"time_mode": time_mode, "X_min": X_min, "X_max": X_max}})
+
+colA, colB = st.columns([1, 2])
+
 with colB:
     # === Mechanism map (weighted) ===
     figBand, axBand = plt.subplots(figsize=(9, 0.7))
@@ -348,24 +377,23 @@ with colB:
             gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12
         )
 
-    # 메커니즘 바 x축 = 공통 X축
+    # 공통 X축 강제 적용 (시간이면 초, 압력이면 0~1)
     axBand.imshow(rgba, extent=(X_min, X_max, 0, 1), aspect="auto", origin="lower")
     axBand.set_xlabel(X_label)
     axBand.set_xlim(X_min, X_max)
     axBand.set_xticks(X_ticks)
     axBand.set_yticks([])
 
-    # (디버그 텍스트는 필요 시만)
-    # axBand.text(X_min, 0.5, f"{X_min:.2f}", va="center", ha="left", fontsize=8)
-    # axBand.text(X_max, 0.5, f"{X_max:.2f}", va="center", ha="right", fontsize=8)
-
     handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
-    leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
+    leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.7),
                         ncol=6, frameon=True)
-    leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
-    st.pyplot(figBand, use_container_width=True); plt.close(figBand)
+    leg.get_frame().set_alpha(0.85)
+    leg.get_frame().set_facecolor("white")
+    st.pyplot(figBand, use_container_width=True)
+    plt.close(figBand)
 
-    # === Permeance (GPU) — 공통 X축 강제 적용 ===
+
+    # === Permeance (GPU) ===
     fig1, ax1 = plt.subplots(figsize=(9, 3))
     ax1.plot(X_vals, Pi1 / GPU_UNIT, label=f"{gas1}")
     ax1.plot(X_vals, Pi2 / GPU_UNIT, '--', label=f"{gas2}")
@@ -373,14 +401,16 @@ with colB:
     ax1.set_xticks(X_ticks)
     ax1.set_xlabel(X_label)
     ax1.set_ylabel(r"$\Pi$ (GPU)")
+
     from matplotlib.ticker import ScalarFormatter
     ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax1.get_yaxis().get_offset_text().set_visible(False)
     ax1.grid(True); ax1.legend(title="Permeance (GPU)")
-    st.pyplot(fig1, use_container_width=True); plt.close(fig1)
+    st.pyplot(fig1, use_container_width=True)
+    plt.close(fig1)
 
-    # === Selectivity — 공통 X축 강제 적용 ===
+    # === Selectivity ===
     fig2, ax2 = plt.subplots(figsize=(9, 3))
     ax2.plot(X_vals, Sel, label=f"{gas1}/{gas2}")
     ax2.set_xlim(X_min, X_max)
@@ -391,7 +421,9 @@ with colB:
     ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax2.get_yaxis().get_offset_text().set_visible(False)
     ax2.grid(True); ax2.legend()
-    st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+    st.pyplot(fig2, use_container_width=True)
+    plt.close(fig2)
+
 
 with colA:
     st.subheader("Mechanism (rule) vs intrinsic (Gas1) — reference")
