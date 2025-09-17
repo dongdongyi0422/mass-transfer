@@ -1,11 +1,9 @@
 # app.py — Unified Transport Simulators (Gas / Ion / Vascular) — SI
-# Streamlit single-file app
+# Streamlit single-file app (no seaborn)
 # Modes:
-#  1) Gas Membrane (your original, organized)
-#  2) Ion-Exchange/NF Membrane (GHK + Donnan, steady-state)
-#  3) Drug in Blood Vessel (1D ADR with Taylor dispersion & wall leakage)
-#
-# Libraries: numpy, matplotlib, streamlit (no seaborn)
+#  1) Gas Membrane (your original, refined)
+#  2) Ion Membrane (multi-ion GHK + Donnan, steady)
+#  3) Drug in Vessel (1D ADR + Taylor dispersion + wall leakage, transient)
 # ---------------------------------------------------------------------------------
 
 import numpy as np
@@ -24,16 +22,15 @@ h  = 6.62607015e-34         # J·s
 NA = 6.02214076e23          # 1/mol
 F  = 96485.33212            # C/mol
 
-# ----------------------------------------------------------------------
-# UI helpers
-# ----------------------------------------------------------------------
+# -------------------- small UI helper --------------------
 def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, help=None):
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
     cur = float(st.session_state[key])
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
     fmt = f"%.{int(decimals)}f"
-    sld = st.slider(lab, float(vmin), float(vmax), float(cur), float(vstep), key=f"{key}_s", help=help)
+    sld = st.slider(lab, float(vmin), float(vmax), float(cur), float(vstep),
+                    key=f"{key}_s", help=help)
     num = st.number_input("", float(vmin), float(vmax), float(cur), float(vstep),
                           format=fmt, key=f"{key}_n")
     new = float(num) if num != cur else float(sld)
@@ -43,7 +40,7 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, hel
     return st.session_state[key]
 
 # =================================================================================
-# MODE 1 — GAS MEMBRANE  (Original + small refactor)
+# MODE 1 — GAS MEMBRANE
 # =================================================================================
 
 GPU_UNIT = 3.35e-10        # mol m^-2 s^-1 Pa^-1
@@ -117,7 +114,7 @@ def pintr_knudsen_SI(d_nm, T, M, L_m):
 def pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A):
     dA_eff = d_eff_A
     pA = d_nm*10.0
-    delta = dA_eff - pA          # >0: pore smaller (blocking)
+    delta = dA_eff - pA
     if delta > 0:
         return max(PI_SOFT_REF*np.exp(-(delta/DELTA_SOFT_A)**2)*np.exp(-E_SIEVE/(R*T)), PI_TINY)
     x = max(1.0 - (dA_eff/pA)**2, 0.0)
@@ -253,6 +250,7 @@ def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q
 
 def run_gas_membrane():
     st.header("Gas Membrane Simulator")
+
     with st.sidebar:
         st.subheader("Global Conditions")
         T    = nudged_slider("Temperature",10.0,600.0,1.0,300.0,key="T_g",unit="K")
@@ -420,47 +418,18 @@ def run_gas_membrane():
         )
         st.caption("Mechanism band uses softmax weights over intrinsic permeances. α uses de Broglie scaling.")
 
-# ============================== ADD BELOW YOUR GAS CODE ==============================
-# (No changes needed above. Paste from here.)
+# =================================================================================
+# MODE 2 — ION MEMBRANE (multi-ion GHK + Donnan)
+# =================================================================================
 
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.ticker import ScalarFormatter
-import streamlit as st
-
-R  = 8.314462618   # J/mol/K
-F  = 96485.33212   # C/mol
-
-# ---------- Small UI helper (same style as your gas UI) ----------
-def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, help=None):
-    if key not in st.session_state:
-        st.session_state[key] = float(vinit)
-    cur = float(st.session_state[key])
-    lab = f"{label}{(' ['+unit+']') if unit else ''}"
-    fmt = f"%.{int(decimals)}f"
-    sld = st.slider(lab, float(vmin), float(vmax), float(cur), float(vstep),
-                    key=f"{key}_s", help=help)
-    num = st.number_input("", float(vmin), float(vmax), float(cur), float(vstep),
-                          format=fmt, key=f"{key}_n")
-    new = float(num) if num != cur else float(sld)
-    new = float(np.clip(new, vmin, vmax))
-    if new != cur:
-        st.session_state[key] = new
-    return st.session_state[key]
-
-# ====================================================================================
-# MODE 2 — ION MEMBRANE (multi-ion, GHK + Donnan, steady-state)
-# ====================================================================================
-
-# Diffusivities ~25 °C (in water, infinite dilution) — typical values
 ION_DB = {
-    # cations (pick ≤5)
+    # cations (≤5 selectable)
     "Na+":   {"z": +1, "D": 1.33e-9},
     "K+":    {"z": +1, "D": 1.96e-9},
     "Li+":   {"z": +1, "D": 1.03e-9},
     "Ca2+":  {"z": +2, "D": 0.79e-9},
     "Mg2+":  {"z": +2, "D": 0.706e-9},
-    # anions (pick ≤5)
+    # anions (≤5 selectable)
     "Cl-":       {"z": -1, "D": 2.03e-9},
     "NO3-":      {"z": -1, "D": 1.90e-9},
     "SO4^2-":    {"z": -2, "D": 1.065e-9},
@@ -469,12 +438,6 @@ ION_DB = {
 }
 
 def donnan_potential_general(c_bulk, z_map, K_map, Cf, T):
-    """
-    Solve Donnan ψ that enforces electroneutrality in the membrane-side boundary:
-       sum_i z_i * K_i * c_i,bulk * exp(-z_i F ψ / RT) + Cf = 0
-    c_bulk: dict species-> mol/m^3 (bulk at that side)
-    Returns ψ [V]
-    """
     def f_psi(psi):
         t = -F*psi/(R*T)
         s = 0.0
@@ -482,12 +445,10 @@ def donnan_potential_general(c_bulk, z_map, K_map, Cf, T):
             z = z_map[sp]; K = K_map.get(sp, 1.0)
             s += z * K * cb * np.exp(-z*t)
         return s + Cf
-
-    # Newton
     psi = 0.0
     for _ in range(80):
         t = -F*psi/(R*T)
-        s = 0.0; ds = 0.0
+        s=0.0; ds=0.0
         for sp, cb in c_bulk.items():
             z = z_map[sp]; K = K_map.get(sp, 1.0)
             val = K*cb*np.exp(-z*t)
@@ -496,17 +457,10 @@ def donnan_potential_general(c_bulk, z_map, K_map, Cf, T):
         g = s + Cf
         step = -g/(ds + 1e-30)
         psi += step
-        if abs(step) < 1e-12:
-            break
+        if abs(step) < 1e-12: break
     return psi
 
 def ghk_flux(Pi, z, Cin, Cout, dV, T):
-    """
-    GHK flux with constant field:
-      J_i = P_i * (z^2 F^2 dV / (R T)) * (Cin - Cout*exp(-z F dV / R T)) / (1 - exp(-z F dV / R T))
-    If dV≈0, reduces to P_i*(Cin-Cout).
-    P_i in m/s, C in mol/m^3 → J in mol m^-2 s^-1
-    """
     if abs(dV) < 1e-12:
         return Pi*(Cin - Cout)
     a = -z*F*dV/(R*T)
@@ -515,66 +469,55 @@ def ghk_flux(Pi, z, Cin, Cout, dV, T):
     return Pi*((z*z)*(F**2)*dV/(R*T))*(num/(den+1e-30))
 
 def run_ion_membrane():
-    st.header("Ion-Exchange/NF Membrane (Multi-ion, steady state)")
+    st.header("Ion-Exchange / NF Membrane (Multi-ion, steady)")
 
-    # Sidebar — membrane/operating
     with st.sidebar:
         st.subheader("Membrane & Operation")
         T = nudged_slider("Temperature", 273.15, 350.0, 1.0, 298.15, key="T_i", unit="K")
-        Lnm = nudged_slider("Active layer thickness", 10.0, 5000.0, 1.0, 200.0, key="L_i", unit="nm")
+        Lnm = nudged_slider("Active layer thickness", 10.0, 5000.0, 1.0, 200.0, key="Lnm_i", unit="nm")
         eps = nudged_slider("Porosity ε", 0.05, 0.8, 0.01, 0.30, key="eps_i", unit="–")
         tau = nudged_slider("Tortuosity τ", 1.0, 5.0, 0.1, 2.0, key="tau_i", unit="–")
-        Cf  = st.slider("Fixed charge C_f", -3000.0, 3000.0, -500.0, 10.0, key="Cf_i")  # mol/m^3
-        dV  = st.slider("Membrane potential drop dV", -0.2, 0.2, 0.0, 0.005, key="dV_i") # V
-        v_s = st.slider("Solvent velocity inside v", -1e-6, 1e-6, 0.0, 1e-7, key="vsolv_i",
-                        help="Optional convective term v·C_avg added to each ion flux")
+        Cf  = st.slider("Fixed charge C_f", -3000.0, 3000.0, -500.0, 10.0, key="Cf_i")
+        dV  = st.slider("Membrane potential dV", -0.2, 0.2, 0.0, 0.005, key="dV_i")
+        v_s = st.slider("Solvent velocity v", -1e-6, 1e-6, 0.0, 1e-7, key="vsolv_i",
+                        help="Convective term v·C_avg added to each ion flux")
 
         st.subheader("Select ions (≤5 cations, ≤5 anions)")
         all_cations = [k for k in ION_DB if ION_DB[k]["z"]>0]
         all_anions  = [k for k in ION_DB if ION_DB[k]["z"]<0]
         sel_cat = st.multiselect("Cations", all_cations, default=["Na+","K+","Ca2+","Li+","Mg2+"], key="sel_cat_i")
         sel_an  = st.multiselect("Anions",  all_anions,  default=["Cl-","NO3-","SO4^2-","HCO3-","Acetate-"], key="sel_an_i")
-
         if len(sel_cat)>5:
-            st.warning("Cations >5 → 앞 5개만 사용합니다.")
-            sel_cat = sel_cat[:5]
+            st.warning("Cations >5 → 앞 5개만 사용합니다."); sel_cat = sel_cat[:5]
         if len(sel_an)>5:
-            st.warning("Anions >5 → 앞 5개만 사용합니다.")
-            sel_an = sel_an[:5]
+            st.warning("Anions >5 → 앞 5개만 사용합니다."); sel_an = sel_an[:5]
 
         st.subheader("Bulk concentrations (mol/m³)")
-        c_feed = {}
-        c_perm = {}
+        c_feed = {}; c_perm = {}
         for sp in sel_cat+sel_an:
             c_feed[sp] = st.number_input(f"{sp} feed", min_value=0.0, value=100.0, step=1.0, key=f"cf_{sp}")
             c_perm[sp] = st.number_input(f"{sp} permeate", min_value=0.0, value=10.0, step=1.0, key=f"cp_{sp}")
 
         st.subheader("Partition K_i and D_i (editable)")
-        K_map = {}
-        D_map = {}
+        K_map = {}; D_map = {}
         for sp in sel_cat+sel_an:
             K_map[sp] = st.number_input(f"K {sp}", min_value=0.01, value=1.0, step=0.01, key=f"K_{sp}")
             D_default = float(ION_DB[sp]["D"])
             D_map[sp] = st.number_input(f"D {sp} [m²/s]", min_value=1e-11, value=D_default, step=1e-11, format="%.2e", key=f"D_{sp}")
 
-    # Effective permeability P_i = (D_i * ε / τ) / L
     L = Lnm*1e-9
     P_map = {sp: (D_map[sp]*eps/max(tau,1e-9))/max(L,1e-12) for sp in (sel_cat+sel_an)}
     z_map = {sp: int(ION_DB[sp]["z"]) for sp in (sel_cat+sel_an)}
 
-    # Donnan potentials at both sides
     psi_f = donnan_potential_general(c_feed, z_map, K_map, Cf, T)
     psi_p = donnan_potential_general(c_perm, z_map, K_map, Cf, T)
 
-    # Membrane-side boundary conc.
-    Cm_f = {}
-    Cm_p = {}
+    Cm_f = {}; Cm_p = {}
     for sp in (sel_cat+sel_an):
         z = z_map[sp]
         Cm_f[sp] = K_map[sp]*c_feed[sp]*np.exp(-(z*F*psi_f)/(R*T))
         Cm_p[sp] = K_map[sp]*c_perm[sp]*np.exp(-(z*F*psi_p)/(R*T))
 
-    # Fluxes (GHK + optional convection)
     J = {}
     for sp in (sel_cat+sel_an):
         z = z_map[sp]
@@ -584,33 +527,29 @@ def run_ion_membrane():
 
     i_net = F*sum(z_map[sp]*J[sp] for sp in (sel_cat+sel_an))  # A/m²
 
-    # ---- Display
     col1, col2 = st.columns([1,2])
     with col1:
         st.subheader("Global results")
         st.metric("Net current density", f"{i_net:.3e} A m⁻²")
         st.caption("전류가 0에 가까울수록 전하수송 균형. dV, C_f, K_i, D_i로 조절해 보세요.")
-
         st.subheader("Membrane-side concentrations")
         for sp in (sel_cat+sel_an):
             st.write(f"{sp}: feed-side {Cm_f[sp]:.1f}, perm-side {Cm_p[sp]:.1f}  (mol/m³)")
 
     with col2:
-        # Bar chart of fluxes
         species = sel_cat + sel_an
         vals = [J[s] for s in species]
         fig, ax = plt.subplots(figsize=(8,3))
         ax.bar(range(len(species)), vals)
-        ax.set_xticks(range(len(species))); ax.set_xticklabels(species, rotation=0)
+        ax.set_xticks(range(len(species))); ax.set_xticklabels(species)
         ax.set_ylabel("Flux J (mol m⁻² s⁻¹)")
         ax.grid(True, axis='y')
         st.pyplot(fig, use_container_width=True); plt.close(fig)
 
-# ====================================================================================
-# MODE 3 — DRUG IN VESSEL (1D ADR + Taylor dispersion + wall leakage, transient)
-# ====================================================================================
+# =================================================================================
+# MODE 3 — DRUG IN VESSEL (1D ADR + Taylor dispersion + wall leakage)
+# =================================================================================
 
-# 10 common drugs (rough, order-of-magnitude defaults @ 37°C-ish)
 DRUG_DB = {
     "Caffeine":        {"Db": 6.5e-10, "Pv": 2.0e-6, "kel": 1.0e-4},
     "Acetaminophen":   {"Db": 6.0e-10, "Pv": 1.5e-6, "kel": 8.0e-5},
@@ -653,14 +592,10 @@ def run_vascular_drug():
     dx = x[1]-x[0]
     t  = np.arange(0.0, t_end+dt, dt)
 
-    # Taylor–Aris dispersion
     Pe_r = U*Rv/Db
     Deff = Db*(1.0 + (Pe_r**2)/192.0)
-
-    # wall leakage as first-order loss
     k_leak = 2.0*Pv/max(Rv,1e-12)
 
-    # inlet profile
     if pulse == "Bolus (Gaussian)":
         t0 = 0.2*t_end
         sig = 0.05*t_end
@@ -668,7 +603,6 @@ def run_vascular_drug():
     else:
         Cin_t = C0*np.ones_like(t)
 
-    # explicit scheme (upwind advection + central diffusion)
     C = np.zeros((len(t), Nx), dtype=float)
     C[0,:] = 0.0
 
@@ -680,14 +614,11 @@ def run_vascular_drug():
     for n in range(1, len(t)):
         Cn = C[n-1,:].copy()
         Cnp = Cn.copy()
-        # inlet
         Cnp[0] = Cin_t[n]
-        # interior
         adv = -lam_a*(Cn[1:] - Cn[:-1])
         dif = lam_d*(np.roll(Cn,-1)[1:-1] - 2*Cn[1:-1] + Cn[0:-2])
         react = -dt*(k_leak + kel)*Cn[1:-1]
         Cnp[1:-1] = Cn[1:-1] + adv[:-1] + dif + react
-        # outlet (convective/Neumann)
         Cnp[-1] = Cnp[-2]
         C[n,:] = np.maximum(Cnp, 0.0)
 
@@ -714,18 +645,19 @@ def run_vascular_drug():
         ax2.grid(True); ax2.legend()
         st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
-# ====================================================================================
-# MODE SWITCH — add the two new modes alongside your Gas membrane
-# ====================================================================================
-st.markdown("---")
+# =================================================================================
+# App shell — Mode selection
+# =================================================================================
+
+st.set_page_config(page_title="Unified Transport Simulators", layout="wide")
+st.title("Unified Transport Simulators (SI)")
+
 mode_main = st.sidebar.radio("Select simulation",
                              ["Gas membrane", "Ion membrane", "Drug in vessel"],
-                             index=0, key="mode_main_all")
+                             index=0)
 
 if mode_main == "Gas membrane":
-    # call YOUR existing gas runner if you wrapped it, else do nothing (your plots already render)
-    # Example if you have run_gas_membrane(): run_gas_membrane()
-    pass
+    run_gas_membrane()
 elif mode_main == "Ion membrane":
     run_ion_membrane()
 else:
