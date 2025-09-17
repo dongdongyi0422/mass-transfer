@@ -39,6 +39,17 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, hel
         st.session_state[key] = new
     return st.session_state[key]
 
+def nudged_int(label, vmin, vmax, vstep, vinit, key, help=None):
+    import numpy as np
+    if key not in st.session_state:
+        st.session_state[key] = int(vinit)
+    cur = int(st.session_state[key])
+    sld = st.slider(label, int(vmin), int(vmax), cur, int(vstep), key=f"{key}_s", help=help)
+    num = st.number_input("", int(vmin), int(vmax), cur, int(vstep), key=f"{key}_n")
+    new = int(num) if num != cur else int(sld)
+    st.session_state[key] = int(np.clip(new, vmin, vmax))
+    return st.session_state[key]
+
 # =================================================================================
 # MODE 1 — GAS MEMBRANE
 # =================================================================================
@@ -584,7 +595,7 @@ def run_vascular_drug():
         pulse = st.selectbox("Profile", ["Bolus (Gaussian)","Constant infusion"], index=0, key="pulse_v")
         t_end = nudged_slider("Sim time", 0.1, 600.0, 0.1, 60.0, key="tend_v", unit="s")
         dt    = nudged_slider("Δt", 1e-3, 0.5, 1e-3, 0.01, key="dt_v", unit="s")
-        Nx    = int(st.slider("Grid Nx", 50, 600, 200, 10, key="Nx_v"))
+        Nx = nudged_int("Grid Nx", 50, 600, 10, 200, key="Nx_v")
 
     Rv = Rv_um*1e-6
     L  = L_mm*1e-3
