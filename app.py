@@ -1,7 +1,8 @@
-# app.py — Membrane Transport Simulator (SI) + de Broglie quantum sieving
+# app.py — Membrane Transport Simulator (SI) + de Broglie QS + α auto-calibration
 # - Mechanism band uses common X-axis (time or P/P0)
 # - de Broglie wavelength -> effective molecular diameter: d_eff = d_geom + alpha * λ(T)
 # - DSL (q1,q2,b1,b2) direct; Permeance shown in GPU
+# - α auto-calibration to user target selectivity via grid search
 
 import numpy as np
 import matplotlib
@@ -12,13 +13,13 @@ from matplotlib.colors import to_rgba
 from matplotlib.ticker import ScalarFormatter
 
 # -------------------- constants / globals --------------------
-R = 8.314462618  # J/mol/K
+R  = 8.314462618  # J/mol/K
 NA = 6.02214076e23
 h  = 6.62607015e-34  # J s
 kB = 1.380649e-23    # J/K
 
 GPU_UNIT = 3.35e-10
-PI_TINY = 1e-14
+PI_TINY  = 1e-14
 
 RHO_EFF   = 500.0
 D0_SURF   = 1e-9
@@ -62,11 +63,11 @@ MECH_COLOR = {
 def lambda_deBroglie(gas, T):
     """Thermal de Broglie wavelength (m) using m = M/NA"""
     m = PARAMS[gas]["M"] / NA  # kg per molecule
-    # Common thermal de Broglie: λ = h / sqrt(2π m k_B T)
+    # λ = h / sqrt(2π m k_B T)
     return h / np.sqrt(2.0*np.pi*m*kB*T)
 
 def eff_diameter_A(gas, T, alpha_qs):
-    """Effective diameter in Å: d_eff = d_geom + alpha * λ(T); λ converted to Å"""
+    """Effective diameter in Å: d_eff = d_geom + alpha * λ(T)"""
     d_geom_A = PARAMS[gas]["d"]
     lam_A = lambda_deBroglie(gas, T) * 1e10  # m -> Å
     return float(d_geom_A + alpha_qs * lam_A)
@@ -184,7 +185,7 @@ def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha_qs):
             w=weights_from_intrinsic(Pi_intr)
         else:
             w=mechanism_weights(g1,g2,T,P_bar,d_nm,float(rp),dq,alpha_qs)
-        # Hard geometric block gate to match rule when pore < dmin
+        # Hard geometric gate for Blocked to match rule
         dmin = min(d1_eff, d2_eff); pA = d_nm*10.0
         if pA <= dmin - SIEVE_BAND_A:
             names.append("Blocked"); continue
@@ -264,7 +265,6 @@ def ldf_evolve_q(t,P_bar_t,qeq_fn,kLDF,q0=0.0):
 def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q_other, alpha_qs):
     L_m=max(L_nm,1e-3)*1e-9; M=PARAMS[gas]["M"]
     d_eff = eff_diameter_A(gas, T, alpha_qs)
-    d_other_eff = eff_diameter_A(other, T, alpha_qs)
     Pi=np.zeros_like(relP,float)
     for i,rp in enumerate(relP):
         Pi_intr={
@@ -288,8 +288,8 @@ def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q
     return Pi
 
 # -------------------- UI --------------------
-st.set_page_config(page_title="Membrane Permeance", layout="wide")
-st.title("Membrane Transport Simulator")
+st.set_page_config(page_title="Membrane Permeance (SI) — de Broglie QS + α calibration", layout="wide")
+st.title("Membrane Transport Simulator (SI units) — de Broglie QS + α calibration")
 
 with st.sidebar:
     st.header("Global Conditions")
@@ -331,25 +331,48 @@ with st.sidebar:
 
     mode = st.radio("X-axis / Simulation mode",["Relative pressure (P/P0)","Time (transient LDF)"],index=0)
 
-    if mode=="Time (transient LDF)":
-        st.subheader("Transient (LDF) settings")
-        t_end=nudged_slider("Total time",0.1,3600.0,0.1,120.0,key="t_end",unit="s")
-        dt   =nudged_slider("Time step",1e-3,10.0,1e-3,0.1,key="dt",unit="s")
-        kLDF =nudged_slider("k_LDF",1e-4,10.0,1e-4,0.05,key="kLDF",unit="s⁻¹")
-        P0bar=nudged_slider("Feed P₀",0.1,10.0,0.1,Pbar,key="P0bar",unit="bar")
-        ramp =st.selectbox("Pressure schedule P(t)",["Step (P=P₀)","Exp ramp: P₀(1-exp(-t/τ))"],index=1)
-        tau  =nudged_slider("τ (only for exp ramp)",1e-3,1000.0,1e-3,5.0,key="tau",unit="s")
+    # -------- α Auto-calibration UI --------
+    st.header("α Auto-calibration (Grid search)")
+    st.caption("목표 선택도에 맞춰 α를 [0,1]에서 탐색하여 오차를 최소화합니다.")
+    cali_enable = st.checkbox("Enable α auto-calibration")
+    if cali_enable:
+        cali_space = st.selectbox("Search space (α)", ["0.00–1.00 (Δ0.01)", "0.00–0.60 (Δ0.01)"], index=1)
+        if cali_space.startswith("0.00–0.60"):
+            alpha_candidates = np.round(np.linspace(0.0, 0.60, 61), 2)
+        else:
+            alpha_candidates = np.round(np.linspace(0.0, 1.00, 101), 2)
 
-# -------------------- compute --------------------
+        cali_mode = st.selectbox("Target type", ["Mid-point selectivity", "Point selectivity @ X"], index=0)
+        if cali_mode == "Mid-point selectivity":
+            target_S = st.number_input("Target selectivity at mid X", min_value=0.0, value=2.0, step=0.1)
+        else:
+            if mode == "Relative pressure (P/P0)":
+                X_target = st.number_input("X target (P/P0)", min_value=0.01, max_value=0.99, value=0.5, step=0.01)
+            else:
+                # time mode: 사용자가 시간(s) 직접 입력
+                X_target = st.number_input("X target (time, s)", min_value=0.0, value=10.0, step=0.1)
+            target_S = st.number_input("Target selectivity at X target", min_value=0.0, value=2.0, step=0.1)
+
+        do_calibrate = st.button("Calibrate α")
+
+# -------------------- compute (core) --------------------
 time_mode = (mode == "Time (transient LDF)")
 
+# 준비: time/pressure grid, adsorption slopes
 if time_mode:
-    # build time and pressure series
+    # 기본 그리드는 뒤에서도 쓰일 수 있으므로 우선 디폴트 정의
+    # (자동보정 시 trial α마다 동일 그리드를 재사용)
+    t_end  = st.session_state.get("t_end", 120.0)
+    dt     = st.session_state.get("dt", 0.1)
+    kLDF   = st.session_state.get("kLDF", 0.05)
+    P0bar  = st.session_state.get("P0bar", Pbar)
+    ramp   = st.session_state.get("ramp", "Exp ramp: P₀(1-exp(-t/τ))")
+    tau    = st.session_state.get("tau", 5.0)
+
     t = np.arange(0.0, t_end + dt, dt)
     P_bar_t = pressure_schedule_series(t, P0bar, ramp, tau)
     relP = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)
 
-    # callbacks for q*(P)
     def qeq_g1(Pbar_scalar):
         rp=float(np.clip(Pbar_scalar/float(Pbar),1e-6,0.9999))
         qv,dv=dsl_loading_and_slope_b(gas1,T,Pbar,np.array([rp]),q11,q12,b11,b12)
@@ -360,42 +383,100 @@ if time_mode:
         qv,dv=dsl_loading_and_slope_b(gas2,T,Pbar,np.array([rp]),q21,q22,b21,b22)
         return float(qv[0]), float(dv[0])
 
-    # LDF integration
     q1_dyn, dqdp1 = ldf_evolve_q(t, P_bar_t, qeq_g1, kLDF, q0=0.0)
     q2_dyn, dqdp2 = ldf_evolve_q(t, P_bar_t, qeq_g2, kLDF, q0=0.0)
 
-    # Permeance over time (alpha_qs propagates)
-    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn, alpha_qs)
-    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn, alpha_qs)
-
 else:
     relP = np.linspace(0.01, 0.99, 500)
-    q1_mg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
-    q2_mg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
+    q1_dyn, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
+    q2_dyn, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
 
-    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mg, dqdp1, q2_mg, alpha_qs)
-    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mg, dqdp2, q1_mg, alpha_qs)
+# ---- Helper: run model once & return selectivity at point/mid for given alpha ----
+def eval_selectivity_for_alpha(alpha):
+    if time_mode:
+        Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn, alpha)
+        Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn, alpha)
+        Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2>0))
+        return Sel
+    else:
+        Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn, alpha)
+        Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn, alpha)
+        Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2>0))
+        return Sel
 
-Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2 > 0))
-Pi1_gpu, Pi2_gpu = Pi1 / GPU_UNIT, Pi2 / GPU_UNIT
+# ---- α auto-calibration (optional) ----
+if 'alpha_qs' not in st.session_state:
+    st.session_state['alpha_qs'] = alpha_qs
 
-# -------------------- Common X axis (single source of truth) --------------------
+if time_mode and 't_end' in st.session_state:
+    # keep nothing extra
+    pass
+
+if 'do_calibrate' in locals() and cali_enable and do_calibrate:
+    best_alpha = None
+    best_err = 1e99
+
+    if cali_mode == "Mid-point selectivity":
+        # mid index on current grid
+        if time_mode:
+            X_grid = t
+        else:
+            X_grid = relP
+        mid_idx = len(X_grid)//2
+
+        for a in alpha_candidates:
+            Sel = eval_selectivity_for_alpha(a)
+            err = abs(float(Sel[mid_idx]) - float(target_S))
+            if err < best_err:
+                best_err, best_alpha = err, float(a)
+
+    else:  # "Point selectivity @ X"
+        if mode == "Relative pressure (P/P0)":
+            # find nearest index to X_target on relP
+            idx = int(np.argmin(np.abs(relP - X_target)))
+        else:
+            # time mode
+            idx = int(np.argmin(np.abs(t - X_target)))
+
+        for a in alpha_candidates:
+            Sel = eval_selectivity_for_alpha(a)
+            err = abs(float(Sel[idx]) - float(target_S))
+            if err < best_err:
+                best_err, best_alpha = err, float(a)
+
+    if best_alpha is not None:
+        st.session_state['alpha_qs'] = best_alpha
+        st.success(f"Calibrated α = {best_alpha:.2f} (abs error = {best_err:.3g})")
+    else:
+        st.warning("Calibration failed to find a better α.")
+
+# Use possibly-updated alpha
+alpha_qs = st.session_state['alpha_qs']
+
+# ---- Final run with chosen alpha ----
 if time_mode:
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn, alpha_qs)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn, alpha_qs)
     X_vals  = t
     X_label = "Time (s)"
     X_min, X_max = float(t[0]), float(t[-1])
     X_ticks = np.linspace(X_min, X_max, 6)
 else:
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn, alpha_qs)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn, alpha_qs)
     X_vals  = relP
     X_label = r"Relative pressure, $P/P_0$ (–)"
     X_min, X_max = 0.0, 1.0
     X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
+Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2>0))
+Pi1_gpu, Pi2_gpu = Pi1/GPU_UNIT, Pi2/GPU_UNIT
+
 # -------------------- layout --------------------
 colA, colB = st.columns([1, 2])
 
 with colB:
-    st.subheader("Mechanism map")
+    st.subheader("Mechanism map (weighted)")
     draw_mechanism_band(
         time_mode, X_min, X_max, X_ticks, X_label,
         gas1, gas2, T, Pbar, d_nm, L_nm, alpha_qs,
@@ -407,7 +488,7 @@ with colB:
         q11, q12, b11, b12
     )
 
-    st.subheader("Permeance (GPU)")
+    st.subheader(f"Permeance (GPU) — α={alpha_qs:.2f}")
     fig1, ax1 = plt.subplots(figsize=(9,3))
     ax1.plot(X_vals, Pi1_gpu, label=f"{gas1}")
     ax1.plot(X_vals, Pi2_gpu, '--', label=f"{gas2}")
@@ -445,14 +526,13 @@ with colA:
         return "Surface"
 
     if time_mode:
-        rp_mid = float(np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)[len(t)//2])
-        dq_mid = float(dqdp1[len(t)//2])
+        rp_mid = float(np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)[len(X_vals)//2])
+        dq_mid = float(dqdp1[len(X_vals)//2])
     else:
-        rp_mid = float(relP[len(relP)//2])
-        dq_mid = float(dqdp1[len(relP)//2])
+        rp_mid = float(relP[len(X_vals)//2])
+        dq_mid = float(dqdp1[len(X_vals)//2])
 
     L_m = L_nm*1e-9; M1 = PARAMS[gas1]["M"]
-    # Intrinsic (mid point) with quantum-corrected diameter in sieving only
     d1_eff = eff_diameter_A(gas1, T, alpha_qs)
     cand = {
         "Blocked":  PI_TINY,
@@ -469,4 +549,4 @@ with colA:
 
 st.markdown("---")
 st.caption("de Broglie-based quantum sieving: d_eff = d_geom + α·λ(T). "
-           "Set α=0 to disable quantum correction. Permeance in SI is converted to GPU.")
+           "Set α=0 to disable quantum correction. Use α auto-calibration to fit target selectivity.")
