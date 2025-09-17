@@ -1,8 +1,8 @@
 # app.py — Membrane Transport Simulator (SI)
-# - Mechanism band: weight-based (softmax/heuristic 선택)
-# - Time 모드일 때 메커니즘 바 x축 = Time (s)
-# - DSL: (q1,q2,b1,b2) 직접 입력
-# - Π는 GPU로 표시
+# - Mechanism band: weighted (softmax/heuristic)
+# - Time mode: mechanism band x-axis = Time (s)
+# - DSL: (q1,q2,b1,b2) direct
+# - Permeance shown in GPU
 
 import numpy as np
 import matplotlib
@@ -128,9 +128,10 @@ def mechanism_weights(gas,other,T,P_bar,d_nm,rp,dqdp):
     w_cap_raw=sig((d_nm-2.0)/0.25)*sig((rp-0.60)/0.06)
     alpha=5e4; s_base=1-np.exp(-alpha*max(float(dqdp),0.0))
     w_surf=s_base*(1-0.9*w_cap_raw); w_cap=w_cap_raw*(1-0.3*s_base)
-    w_sol=sig((SOL_TH_NM-d_nm)/0.02); w_blk=np.exp(-((dmin-pA)/max(SIEVE_BAND_A,1e-6))**2) if pA<dmin else 0.0
+    w_sol=sig((SOL_TH_NM-d_nm)/0.02)
+    w_blk=np.exp(-((dmin-pA)/max(SIEVE_BAND_A,1e-6))**2) if pA<dmin else 0.0
     w={"Blocked":w_blk,"Sieving":w_sieve,"Knudsen":w_kn,"Surface":w_surf,"Capillary":w_cap,"Solution":w_sol}
-    s=sum(w.values())
+    s=sum(w.values()); 
     return {k:v/s for k,v in w.items()} if s>1e-12 else {"Blocked":0,"Sieving":0,"Knudsen":0,"Surface":1,"Capillary":0,"Solution":0}
 
 def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
@@ -159,12 +160,12 @@ def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12):
     rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
     return rgba, names
 
-def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp_series_g1,P0bar):
+def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp_g1,P0bar):
     L_m=max(float(L_nm),1e-3)*1e-9; M1=PARAMS[g1]["M"]
     rp_t=np.clip(P_bar_t/float(P0bar),1e-6,0.9999)
     names=[]
     for i in range(len(t_vec)):
-        rp=float(rp_t[i]); dq=float(dqdp_series_g1[i])
+        rp=float(rp_t[i]); dq=float(dqdp_g1[i])
         Pi_intr={
             "Blocked":PI_TINY,
             "Sieving":pintr_sieving_SI(d_nm,g1,T,L_m),
@@ -179,30 +180,16 @@ def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp_series_g
     rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
     return rgba, names
 
-def draw_mechanism_band(time_mode, gas1, gas2, T, Pbar, d_nm, L_nm,
+def draw_mechanism_band(time_mode, X_min, X_max, X_ticks, X_label,
+                        gas1, gas2, T, Pbar, d_nm, L_nm,
                         t, P_bar_t, dqdp1, P0bar,
                         relP, q11, q12, b11, b12):
-    """
-    시간/압력 모드에 따라 x축을 '단 한 곳'에서 결정하고,
-    그걸 메커니즘 바에 강제로 적용.
-    """
-    # ---- 공통 X축을 '여기서' 최종 확정 ----
+    """Draw mechanism band with the already-finalized common X-axis."""
     if time_mode:
-        X_vals  = t
-        X_label = "Time (s)"
-        X_min, X_max = float(t[0]), float(t[-1])
-        X_ticks = np.linspace(X_min, X_max, 6)
-        rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm,
-                                           t, P_bar_t, dqdp1, P0bar)
+        rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1, P0bar)
     else:
-        X_vals  = relP
-        X_label = r"Relative pressure, $P/P_0$ (–)"
-        X_min, X_max = 0.0, 1.0
-        X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-        rgba, _ = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm,
-                                      relP, L_nm, q11, q12, b11, b12)
+        rgba, _ = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12)
 
-    # ---- 그리기 ----
     fig, ax = plt.subplots(figsize=(9, 0.7))
     ax.imshow(rgba, extent=(X_min, X_max, 0, 1), aspect="auto", origin="lower")
     ax.set_xlabel(X_label)
@@ -210,19 +197,11 @@ def draw_mechanism_band(time_mode, gas1, gas2, T, Pbar, d_nm, L_nm,
     ax.set_xticks(X_ticks)
     ax.set_yticks([])
 
-    # 범례
     handles = [plt.Rectangle((0,0),1,1, fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
     leg = ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,-0.7),
                     ncol=6, frameon=True)
     leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
-
-    # 디버그(잠깐만 확인용): 실제 xlim 출력
-    st.write({"DBG_mech_xlim": tuple(map(float, ax.get_xlim()))})
     st.pyplot(fig, use_container_width=True); plt.close(fig)
-
-    # 강제 가드: 시간 모드인데도 0~1로 남아 있으면 즉시 경고
-    if time_mode and abs(X_max - 1.0) < 1e-9:
-        st.error("Time mode인데 메커니즘 바 x축이 0–1로 잡혔습니다. 이 블록 외의 메커니즘 바 그리는 코드가 남아있는지 확인하세요.")
 
 # -------------------- transient LDF --------------------
 def pressure_schedule_series(t,P0_bar,ramp,tau):
@@ -258,7 +237,7 @@ def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q
         w=weights_from_intrinsic(Pi_intr) if WEIGHT_MODE=="softmax" else mechanism_weights(gas,other,T,P_bar,d_nm,rp,dqdp[i])
         Pi_pore = w["Sieving"]*Pi_intr["Sieving"] + w["Knudsen"]*Pi_intr["Knudsen"] + w["Capillary"]*Pi_intr["Capillary"]
         Pi_diff = w["Surface"]*Pi_intr["Surface"] + w["Solution"]*Pi_intr["Solution"]
-        Pi0=_series_parallel(Pi_pore,Pi_diff)
+        Pi0=_series_parallel(Pi_pore, Pi_diff)
         theta = (q_mmolg[i]/(q_mmolg[i]+q_other[i])) if (q_mmolg[i]+q_other[i])>0 else 0.0
         Pi[i]=Pi0*theta
     return Pi
@@ -313,55 +292,46 @@ with st.sidebar:
         ramp =st.selectbox("Pressure schedule P(t)",["Step (P=P₀)","Exp ramp: P₀(1-exp(-t/τ))"],index=1)
         tau  =nudged_slider("τ (only for exp ramp)",1e-3,1000.0,1e-3,5.0,key="tau",unit="s")
 
+# -------------------- compute --------------------
 time_mode = (mode == "Time (transient LDF)")
 
-# === Common X axis (단 하나의 진실) ===
 if time_mode:
-    X_vals  = t
-    X_label = "Time (s)"
-    X_min, X_max = float(t[0]), float(t[-1])
-    X_ticks = np.linspace(X_min, X_max, 6)
-else:
-    X_vals  = relP
-    X_label = r"Relative pressure, $P/P_0$ (–)"
-    X_min, X_max = 0.0, 1.0
-    X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    # build time and pressure series
+    t = np.arange(0.0, t_end + dt, dt)
+    P_bar_t = pressure_schedule_series(t, P0bar, ramp, tau)
+    relP = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)
 
-# -------------------- compute --------------------
-if time_mode:
-    t=np.arange(0.0,t_end+dt,dt)
-    P_bar_t=pressure_schedule_series(t,P0bar,ramp,tau)
-    relP=np.clip(P_bar_t/float(P0bar),1e-6,0.9999)
-
+    # callbacks for q*(P)
     def qeq_g1(Pbar_scalar):
         rp=float(np.clip(Pbar_scalar/float(Pbar),1e-6,0.9999))
         qv,dv=dsl_loading_and_slope_b(gas1,T,Pbar,np.array([rp]),q11,q12,b11,b12)
-        return float(qv[0]),float(dv[0])
+        return float(qv[0]), float(dv[0])
 
     def qeq_g2(Pbar_scalar):
         rp=float(np.clip(Pbar_scalar/float(Pbar),1e-6,0.9999))
         qv,dv=dsl_loading_and_slope_b(gas2,T,Pbar,np.array([rp]),q21,q22,b21,b22)
-        return float(qv[0]),float(dv[0])
+        return float(qv[0]), float(dv[0])
 
-    q1_dyn,dqdp1=ldf_evolve_q(t,P_bar_t,qeq_g1,kLDF,0.0)
-    q2_dyn,dqdp2=ldf_evolve_q(t,P_bar_t,qeq_g2,kLDF,0.0)
+    # LDF integration
+    q1_dyn, dqdp1 = ldf_evolve_q(t, P_bar_t, qeq_g1, kLDF, q0=0.0)
+    q2_dyn, dqdp2 = ldf_evolve_q(t, P_bar_t, qeq_g2, kLDF, q0=0.0)
 
-    Pi1=permeance_series_SI(d_nm,gas1,gas2,T,Pbar,relP,L_nm,q1_dyn,dqdp1,q2_dyn)
-    Pi2=permeance_series_SI(d_nm,gas2,gas1,T,Pbar,relP,L_nm,q2_dyn,dqdp2,q1_dyn)
+    # Permeance over time
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn)
 
-    x_axis=t; x_label="Time (s)"
 else:
-    relP=np.linspace(0.01,0.99,500)
-    q1_mg,dqdp1=dsl_loading_and_slope_b(gas1,T,Pbar,relP,q11,q12,b11,b12)
-    q2_mg,dqdp2=dsl_loading_and_slope_b(gas2,T,Pbar,relP,q21,q22,b21,b22)
-    Pi1=permeance_series_SI(d_nm,gas1,gas2,T,Pbar,relP,L_nm,q1_mg,dqdp1,q2_mg)
-    Pi2=permeance_series_SI(d_nm,gas2,gas1,T,Pbar,relP,L_nm,q2_mg,dqdp2,q1_mg)
-    x_axis=relP; x_label=r"Relative pressure, $P/P_0$ (–)"
+    relP = np.linspace(0.01, 0.99, 500)
+    q1_mg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
+    q2_mg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
 
-Sel = np.divide(Pi1,Pi2,out=np.zeros_like(Pi1),where=(Pi2>0))
-Pi1_gpu=Pi1/GPU_UNIT; Pi2_gpu=Pi2/GPU_UNIT
+    Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mg, dqdp1, q2_mg)
+    Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mg, dqdp2, q1_mg)
 
-# === Common X axis (single source of truth) — compute 끝난 직후 ===
+Sel = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2 > 0))
+Pi1_gpu, Pi2_gpu = Pi1 / GPU_UNIT, Pi2 / GPU_UNIT
+
+# -------------------- Common X axis (single source of truth) --------------------
 if time_mode:
     X_vals  = t
     X_label = "Time (s)"
@@ -372,66 +342,45 @@ else:
     X_label = r"Relative pressure, $P/P_0$ (–)"
     X_min, X_max = 0.0, 1.0
     X_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-
-# (선택) 디버그: 최종 확정된 X범위 확인
-st.write({"DBG_x_final": {"time_mode": time_mode, "X_min": X_min, "X_max": X_max}})
-
-
-# ==== 공통 X축 정의 (둘 다 여기만 봅니다) ====
-if time_mode:
-    x_axis_common = t
-    x_label_common = "Time (s)"
-    x_min, x_max = float(t[0]), float(t[-1])
-    x_ticks_common = np.linspace(x_min, x_max, 6)
-else:
-    x_axis_common = relP
-    x_label_common = r"Relative pressure, $P/P_0$ (–)"
-    x_min, x_max = 0.0, 1.0
-    x_ticks_common = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-
 
 # -------------------- layout --------------------
 colA, colB = st.columns([1, 2])
 
 with colB:
-    # === Mechanism map (weighted, forced X-axis) ===
-    draw_mechanism_band(time_mode, gas1, gas2, T, Pbar, d_nm, L_nm,
-                        t if time_mode else np.array([0.0, 1.0]),   # 시간 모드 아니면 더미
-                        P_bar_t if time_mode else np.array([1.0, 1.0]),
-                        dqdp1 if time_mode else np.array([0.0, 0.0]),
-                        P0bar if time_mode else Pbar,
-                        relP if not time_mode else np.array([0.0, 1.0]),
-                        q11, q12, b11, b12)
+    st.subheader("Mechanism map (weighted)")
+    draw_mechanism_band(
+        time_mode, X_min, X_max, X_ticks, X_label,
+        gas1, gas2, T, Pbar, d_nm, L_nm,
+        t if time_mode else None,
+        P_bar_t if time_mode else None,
+        dqdp1 if time_mode else None,
+        P0bar if time_mode else None,
+        relP if not time_mode else None,
+        q11, q12, b11, b12
+    )
 
-    # 공통 X축 다시 계산 (메커니즘 바와 동일 로직)
-    if time_mode:
-        X_vals, X_label = t, "Time (s)"
-        X_min, X_max = float(t[0]), float(t[-1]); X_ticks = np.linspace(X_min, X_max, 6)
-    else:
-        X_vals, X_label = relP, r"Relative pressure, $P/P_0$ (–)"
-        X_min, X_max = 0.0, 1.0; X_ticks = [0,0.2,0.4,0.6,0.8,1.0]
-
-    # Permeance
+    st.subheader("Permeance (GPU)")
     fig1, ax1 = plt.subplots(figsize=(9,3))
-    ax1.plot(X_vals, Pi1/GPU_UNIT, label=f"{gas1}")
-    ax1.plot(X_vals, Pi2/GPU_UNIT, '--', label=f"{gas2}")
+    ax1.plot(X_vals, Pi1_gpu, label=f"{gas1}")
+    ax1.plot(X_vals, Pi2_gpu, '--', label=f"{gas2}")
     ax1.set_xlim(X_min, X_max); ax1.set_xticks(X_ticks); ax1.set_xlabel(X_label)
-    ax1.set_ylabel(r"$\Pi$ (GPU)"); ax1.grid(True); ax1.legend(title="Permeance (GPU)")
+    ax1.set_ylabel(r"$\Pi$ (GPU)")
     ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax1.get_yaxis().get_offset_text().set_visible(False)
+    ax1.grid(True); ax1.legend(title="Permeance (GPU)")
     st.pyplot(fig1, use_container_width=True); plt.close(fig1)
 
-    # Selectivity
+    st.subheader("Selectivity")
     fig2, ax2 = plt.subplots(figsize=(9,3))
     ax2.plot(X_vals, Sel, label=f"{gas1}/{gas2}")
     ax2.set_xlim(X_min, X_max); ax2.set_xticks(X_ticks); ax2.set_xlabel(X_label)
-    ax2.set_ylabel("Selectivity (–)"); ax2.grid(True); ax2.legend()
+    ax2.set_ylabel("Selectivity (–)")
     ax2.ticklabel_format(axis='y', style='plain', useOffset=False)
     ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
     ax2.get_yaxis().get_offset_text().set_visible(False)
+    ax2.grid(True); ax2.legend()
     st.pyplot(fig2, use_container_width=True); plt.close(fig2)
-
 
 with colA:
     st.subheader("Mechanism (rule) vs intrinsic (Gas1) — reference")
@@ -447,14 +396,12 @@ with colA:
 
     if time_mode:
         rp_mid = float(np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)[len(t)//2])
+        dq_mid = float(dqdp1[len(t)//2])
     else:
         rp_mid = float(relP[len(relP)//2])
+        dq_mid = float(dqdp1[len(relP)//2])
 
     L_m = L_nm*1e-9; M1 = PARAMS[gas1]["M"]
-    # dqdp1은 위에서 이미 계산되어 있음. x축 길이 기준 인덱스 사용
-    mid_idx = len(X_vals)//2
-    dq_mid = float(dqdp1[mid_idx]) if np.ndim(dqdp1)>0 and len(dqdp1)>mid_idx else 0.0
-
     cand = {
         "Blocked":  PI_TINY,
         "Sieving":  pintr_sieving_SI(d_nm, gas1, T, L_m),
@@ -467,3 +414,7 @@ with colA:
         f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid)}`  "
         f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
     )
+
+st.markdown("---")
+st.caption("Permeance in SI is converted to GPU for visualization. "
+           "Capillary/Sieving are calibrated proxies. Surface/Solution terms use DSL slope (∂q/∂p) via ρ_eff.")
