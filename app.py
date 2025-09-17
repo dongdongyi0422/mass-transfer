@@ -31,7 +31,7 @@ DELTA_SOFT_A = 0.50
 PI_SOFT_REF  = 1e-6
 
 # weighting
-WEIGHT_MODE   = "softmax"   # "softmax" or "heuristic"
+WEIGHT_MODE   = "heuristic"   # "softmax" or "heuristic"
 SOFTMAX_GAMMA = 0.8
 DAMP_KNUDSEN  = True
 DAMP_FACTOR   = 1e-3
