@@ -288,8 +288,8 @@ def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q
     return Pi
 
 # -------------------- UI --------------------
-st.set_page_config(page_title="Membrane Permeance (SI)", layout="wide")
-st.title("Membrane Transport Simulator (SI units) — with de Broglie correction")
+st.set_page_config(page_title="Membrane Permeance", layout="wide")
+st.title("Membrane Transport Simulator")
 
 with st.sidebar:
     st.header("Global Conditions")
@@ -395,7 +395,7 @@ else:
 colA, colB = st.columns([1, 2])
 
 with colB:
-    st.subheader("Mechanism map (weighted)")
+    st.subheader("Mechanism map")
     draw_mechanism_band(
         time_mode, X_min, X_max, X_ticks, X_label,
         gas1, gas2, T, Pbar, d_nm, L_nm, alpha_qs,
