@@ -1,5 +1,5 @@
 # app.py — Unified Transport Simulators (Gas / Ion / Vascular)
-# - 슬라이더 옆 회색 입력칸 제거 (number_input 전부 삭제)
+# - 모든 슬라이더에 대응하는 입력칸(number_input) 제공
 # - Ion membrane: Bulk conc sliders + K&D 자동(T/η) + 수동 오버라이드 옵션
 # - Drug in vessel: Db 자동 보정(water/plasma) 옵션 + Pv, k_elim 로그 슬라이더
 
@@ -19,39 +19,58 @@ NA = 6.02214076e23          # 1/mol
 F  = 96485.33212            # C/mol
 
 # ==============================================================================
-# Shared UI helpers  (슬라이더만 사용)
+# Shared UI helpers  (슬라이더 + 입력칸)
 # ==============================================================================
 def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, help=None):
-    """숫자 입력칸 없이 슬라이더만 표시"""
+    """
+    슬라이더 + 숫자 입력칸(아래). 두 위젯 중 마지막 조작값을 채택.
+    """
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
+    cur = float(st.session_state[key])
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
-    val = st.slider(lab, float(vmin), float(vmax), float(st.session_state[key]), float(vstep),
-                    help=help, key=f"{key}_s", format=f"%.{int(decimals)}f")
-    st.session_state[key] = float(val)
-    return st.session_state[key]
+    fmt = f"%.{int(decimals)}f"
+
+    sld = st.slider(lab, float(vmin), float(vmax), float(cur), float(vstep),
+                    help=help, key=f"{key}_s", format=fmt)
+    # 입력칸은 label 없이 바로 아래
+    num = st.number_input("", float(vmin), float(vmax), float(cur), float(vstep),
+                          key=f"{key}_n", format=fmt)
+    # 마지막으로 바뀐 위젯 추정: 값이 달라졌으면 그쪽 사용
+    new = float(num) if num != cur else float(sld)
+    new = float(np.clip(new, vmin, vmax))
+    if new != cur:
+        st.session_state[key] = new
+    return float(st.session_state[key])
 
 def nudged_int(label, vmin, vmax, vstep, vinit, key, help=None):
-    """정수 슬라이더만 표시"""
+    """정수 슬라이더 + 입력칸"""
     if key not in st.session_state:
         st.session_state[key] = int(vinit)
-    val = st.slider(label, int(vmin), int(vmax), int(st.session_state[key]), int(vstep),
-                    help=help, key=f"{key}_s_int")
-    st.session_state[key] = int(val)
-    return st.session_state[key]
+    cur = int(st.session_state[key])
+
+    sld = st.slider(label, int(vmin), int(vmax), cur, int(vstep), help=help, key=f"{key}_s_int")
+    num = st.number_input("", int(vmin), int(vmax), cur, int(vstep), key=f"{key}_n_int")
+    new = int(num) if num != cur else int(sld)
+    st.session_state[key] = int(np.clip(new, vmin, vmax))
+    return int(st.session_state[key])
 
 def log_slider(label, exp_min, exp_max, exp_step, exp_init, key, unit="", help=None):
     """
     로그 스케일 슬라이더: 지수 x 선택 → 값 = 10**x
-    (숫자 입력칸 없음)
+    - 슬라이더 아래 입력칸은 '지수 x'를 직접 입력.
     """
     if key not in st.session_state:
         st.session_state[key] = float(exp_init)
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
+
     exp = st.slider(lab, float(exp_min), float(exp_max), float(st.session_state[key]),
                     float(exp_step), help=help, key=f"{key}_s_log", format="%.2f")
-    st.session_state[key] = float(exp)
-    return 10.0 ** st.session_state[key]
+    exp_num = st.number_input("exp (10^x)", float(exp_min), float(exp_max),
+                              float(exp), float(exp_step), key=f"{key}_n_log", format="%.2f")
+    exp_val = exp_num if exp_num != exp else exp
+    st.session_state[key] = float(exp_val)
+    return 10.0 ** float(st.session_state[key])
 
 # ---------- viscosity & D(T) helpers ----------
 def eta_water_PaS(T_K: float) -> float:
@@ -145,18 +164,18 @@ def pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A):
     return max(3e-4*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
 
 def pintr_surface_SI(d_nm, gas, T, L_m, dqdp):
-    Ds = D0_SURF*np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
-    return max((Ds/L_m)*(dqdp*RHO_EFF),0.0)
+    Ds = 1e-9*np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
+    return max((Ds/L_m)*(dqdp*500.0),0.0)
 
 def pintr_capillary_SI(d_nm, rp, L_m):
     r_m = max(d_nm*1e-9/2.0, 1e-12)
     thresh = np.exp(-120.0/(((d_nm/2.0)*rp*300.0)+1e-12))
     if rp <= thresh: return 0.0
-    return K_CAP*np.sqrt(r_m)/L_m
+    return 1e-7*np.sqrt(r_m)/L_m
 
 def pintr_solution_SI(gas, T, L_m, dqdp):
-    Dsol = D0_SOL*np.exp(-E_D_SOL/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
-    return max((Dsol/L_m)*(dqdp*RHO_EFF),0.0)
+    Dsol = 1e-10*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
+    return max((Dsol/L_m)*(dqdp*500.0),0.0)
 
 def _series_parallel(Pp,Pd,eps=1e-30):
     if not np.isfinite(Pp): Pp=0.0
@@ -188,7 +207,7 @@ def weights_from_intrinsic(Pi_intr, gamma=0.8):
 
 def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
     if WEIGHT_MODE=="softmax" and DAMP_KNUDSEN and (d_nm>=2.0 and rp>=0.55):
-        Pi_intr["Knudsen"]*=DAMP_FACTOR
+        Pi_intr["Knudsen"]*=1e-3
     return Pi_intr
 
 def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha):
@@ -452,12 +471,6 @@ ION_DB = {
 T_REF_ION = 298.15  # ION_DB 기준온도 (25°C)
 
 def donnan_potential_general(c_bulk, z_map, K_map, Cf, T):
-    def f_psi(psi):
-        t = -F*psi/(R*T); s = 0.0
-        for sp, cb in c_bulk.items():
-            z = z_map[sp]; K = K_map.get(sp, 1.0)
-            s += z * K * cb * np.exp(-z*t)
-        return s + Cf
     psi = 0.0
     for _ in range(80):
         t = -F*psi/(R*T)
@@ -490,10 +503,10 @@ def run_ion_membrane():
         Lnm = nudged_slider("Active layer thickness", 10.0, 5000.0, 1.0, 200.0, key="Lnm_i", unit="nm")
         eps = nudged_slider("Porosity ε", 0.05, 0.8, 0.01, 0.30, key="eps_i", unit="–")
         tau = nudged_slider("Tortuosity τ", 1.0, 5.0, 0.1, 2.0, key="tau_i", unit="–")
-        Cf  = st.slider("Fixed charge C_f", -3000.0, 3000.0, -500.0, 10.0, key="Cf_i")
-        dV  = st.slider("Membrane potential dV", -0.2, 0.2, 0.0, 0.005, key="dV_i")
-        v_s = st.slider("Solvent velocity v", -1e-6, 1e-6, 0.0, 1e-7, key="vsolv_i",
-                        help="Convective term v·C_avg added to each ion flux")
+        Cf  = nudged_slider("Fixed charge C_f", -3000.0, 3000.0, 10.0, -500.0, key="Cf_i")
+        dV  = nudged_slider("Membrane potential dV", -0.2, 0.2, 0.005, 0.0, key="dV_i")
+        v_s = nudged_slider("Solvent velocity v", -1e-6, 1e-6, 1e-7, 0.0, key="vsolv_i",
+                            help="Convective term v·C_avg added to each ion flux")
 
         st.subheader("Select ions (≤5 cations, ≤5 anions)")
         all_cations = [k for k in ION_DB if ION_DB[k]["z"]>0]
