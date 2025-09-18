@@ -1,11 +1,7 @@
 # app.py — Unified Transport Simulators (Gas / Ion / Vascular)
-# © 열및물질전달
-# ------------------------------------------------------------------------------
-# Modes:
-# 1) Gas membrane: multi-mechanism (Knudsen / Sieving / Surface / Capillary / Solution)
-# 2) Ion membrane: multi-ion (GHK + Donnan), bulk conc sliders, K&D auto (T/η)
-# 3) Drug in vessel: 1D ADR + Taylor-Aris + wall leakage, Db auto option
-# ------------------------------------------------------------------------------
+# - 슬라이더 옆 회색 입력칸 제거 (number_input 전부 삭제)
+# - Ion membrane: Bulk conc sliders + K&D 자동(T/η) + 수동 오버라이드 옵션
+# - Drug in vessel: Db 자동 보정(water/plasma) 옵션 + Pv, k_elim 로그 슬라이더
 
 import numpy as np
 import matplotlib
@@ -23,58 +19,49 @@ NA = 6.02214076e23          # 1/mol
 F  = 96485.33212            # C/mol
 
 # ==============================================================================
-# Shared UI helpers
+# Shared UI helpers  (슬라이더만 사용)
 # ==============================================================================
 def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, help=None):
+    """숫자 입력칸 없이 슬라이더만 표시"""
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
-    cur = float(st.session_state[key])
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
-    fmt = f"%.{int(decimals)}f"
-    sld = st.slider(lab, float(vmin), float(vmax), float(cur), float(vstep),
-                    key=f"{key}_s", help=help)
-    new = float(num) if num != cur else float(sld)
-    new = float(np.clip(new, vmin, vmax))
-    if new != cur:
-        st.session_state[key] = new
+    val = st.slider(lab, float(vmin), float(vmax), float(st.session_state[key]), float(vstep),
+                    help=help, key=f"{key}_s", format=f"%.{int(decimals)}f")
+    st.session_state[key] = float(val)
     return st.session_state[key]
 
 def nudged_int(label, vmin, vmax, vstep, vinit, key, help=None):
+    """정수 슬라이더만 표시"""
     if key not in st.session_state:
         st.session_state[key] = int(vinit)
-    cur = int(st.session_state[key])
-    sld = st.slider(label, int(vmin), int(vmax), cur, int(vstep), key=f"{key}_s", help=help)
-    num = st.number_input("", int(vmin), int(vmax), cur, int(vstep), key=f"{key}_n")
-    new = int(num) if num != cur else int(sld)
-    st.session_state[key] = int(np.clip(new, vmin, vmax))
+    val = st.slider(label, int(vmin), int(vmax), int(st.session_state[key]), int(vstep),
+                    help=help, key=f"{key}_s_int")
+    st.session_state[key] = int(val)
     return st.session_state[key]
 
 def log_slider(label, exp_min, exp_max, exp_step, exp_init, key, unit="", help=None):
-    """로그 스케일 슬라이더 (값 = 10**exp). exp_*는 지수 범위."""
+    """
+    로그 스케일 슬라이더: 지수 x 선택 → 값 = 10**x
+    (숫자 입력칸 없음)
+    """
     if key not in st.session_state:
         st.session_state[key] = float(exp_init)
-    cur = float(st.session_state[key])
     lab = f"{label}{(' ['+unit+']') if unit else ''}"
-    exp = st.slider(lab, float(exp_min), float(exp_max), float(cur), float(exp_step),
-                    key=f"{key}_s", help=help)
-    exp_num = st.number_input("exp(10^x)", float(exp_min), float(exp_max), float(exp), float(exp_step),
-                              key=f"{key}_n")
-    exp_val = exp_num if exp_num != exp else exp
-    st.session_state[key] = exp_val
-    return 10.0 ** float(st.session_state[key])
+    exp = st.slider(lab, float(exp_min), float(exp_max), float(st.session_state[key]),
+                    float(exp_step), help=help, key=f"{key}_s_log", format="%.2f")
+    st.session_state[key] = float(exp)
+    return 10.0 ** st.session_state[key]
 
 # ---------- viscosity & D(T) helpers ----------
 def eta_water_PaS(T_K: float) -> float:
-    """
-    물의 점도(μ, Pa·s) 근사 (Vogel-Fulcher-Tammann type, °C 입력 주의).
-    μ = A * 10^(B/(T_C - C)),  A=2.414e-5 Pa·s, B=247.8 K, C=140 K
-    """
+    """물 점도(μ, Pa·s) 근사: μ = A * 10^(B/(T_C - C))"""
     T_C = float(T_K) - 273.15
     A, B, C = 2.414e-5, 247.8, 140.0
     return A * (10.0 ** (B / (T_C - C)))
 
 def D_temp_correction(D_ref: float, T_ref: float, T: float, eta_ref: float, eta: float) -> float:
-    """Stokes–Einstein 스케일링: D(T) ≈ D_ref * (T/T_ref) * (eta_ref/eta)"""
+    """Stokes–Einstein: D(T) ≈ D_ref * (T/T_ref) * (η_ref/η)"""
     return float(D_ref) * (float(T)/float(T_ref)) * (float(eta_ref)/float(eta))
 
 # ==============================================================================
@@ -444,7 +431,7 @@ def run_gas_membrane():
             f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid,alpha)}`  "
             f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
         )
-        st.caption("Band shows weight-based winners per x-position. α uses λ_th scaling with optional pore-size boost.")
+        st.caption("Band shows weight-based winners per x-position. α uses thermal λ scaling.")
 
 # ==============================================================================
 # MODE 2 — ION MEMBRANE (multi-ion, steady)
@@ -516,7 +503,7 @@ def run_ion_membrane():
         if len(sel_cat)>5: st.warning("Cations >5 → 앞 5개만 사용합니다."); sel_cat = sel_cat[:5]
         if len(sel_an)>5:  st.warning("Anions >5 → 앞 5개만 사용합니다.");  sel_an  = sel_an[:5]
 
-        # ---------- Bulk concentrations sliders ----------
+        # Bulk concentrations
         st.subheader("Bulk concentrations (mol/m³)")
         st.caption("종마다 feed/permeate 농도를 슬라이더로 조정 (0~1000 mol/m³)")
         c_feed = {}; c_perm = {}
@@ -524,33 +511,26 @@ def run_ion_membrane():
             c_feed[sp] = nudged_slider(f"{sp} feed", 0.0, 1000.0, 1.0, 100.0, key=f"cf_{sp}", unit="mol/m³")
             c_perm[sp] = nudged_slider(f"{sp} permeate", 0.0, 1000.0, 1.0, 10.0,  key=f"cp_{sp}", unit="mol/m³")
 
-        # ---------- K & D 설정 (Auto 권장) ----------
+        # K & D 설정 (Auto 권장)
         st.subheader("K & D 설정")
         auto_kd = st.checkbox("Auto-compute K & D (권장)", value=True, key="autoKD_i")
 
         if auto_kd:
-            # (1) 화학적 분배 K: 1.0 (전하 유도 분배는 Donnan 지수항에서 처리)
-            K_map = {sp: 1.0 for sp in (sel_cat + sel_an)}
-            # (2) D(T) 보정
+            K_map = {sp: 1.0 for sp in (sel_cat + sel_an)}  # 화학적 분배
             T_ref = T_REF_ION
             eta_ref = eta_water_PaS(T_ref)
             eta_now = eta_water_PaS(T)
-            D_map = {}
-            for sp in (sel_cat + sel_an):
-                D_ref = ION_DB[sp]["D"]
-                D_map[sp] = D_temp_correction(D_ref, T_ref, T, eta_ref, eta_now)
-
+            D_map = {sp: D_temp_correction(ION_DB[sp]["D"], T_ref, T, eta_ref, eta_now)
+                     for sp in (sel_cat + sel_an)}
             with st.expander("Auto values (read-only)"):
-                st.caption("D는 Stokes–Einstein 비례식으로 T/η 보정됨. K는 화학적 분배=1.0 (전하 분배는 Donnan에서 처리).")
+                st.caption("D는 Stokes–Einstein으로 T/η 보정. K는 화학적 분배=1.0 (전하 분배는 Donnan에서 처리).")
                 for sp in (sel_cat + sel_an):
                     st.write(f"{sp}:  K={K_map[sp]:.2f},  D(T)={D_map[sp]:.3e} m²/s  (from {ION_DB[sp]['D']:.3e} @25°C)")
         else:
             st.caption("수동 조절 모드: DB 기본값에서 벗어나 실험 피팅/감도분석용")
-            K_map = {}; D_map = {}
-            for sp in (sel_cat+sel_an):
-                K_map[sp] = nudged_slider(f"K {sp}", 0.01, 10.0, 0.01, 1.0, key=f"K_{sp}")
-                D_map[sp] = log_slider(f"D {sp}", -11.0, -8.0, 0.1, np.log10(ION_DB[sp]['D']),
-                                       key=f"D_{sp}", unit="m²/s")
+            K_map = {sp: nudged_slider(f"K {sp}", 0.01, 10.0, 0.01, 1.0, key=f"K_{sp}") for sp in (sel_cat+sel_an)}
+            D_map = {sp: log_slider(f"D {sp}", -11.0, -8.0, 0.1, np.log10(ION_DB[sp]['D']), key=f"D_{sp}", unit="m²/s")
+                     for sp in (sel_cat+sel_an)}
 
     # Effective permeability
     L = Lnm*1e-9
