@@ -158,55 +158,6 @@ GAS_PARAMS = {
     "C3H8":{"M":44.097e-3, "d":4.30, "Ea_s":1.05e4},
 }
 
-def intrinsic_permeances(
-    gas, T, Pbar, d_nm, rp, L_nm, dqdp, alpha,
-    apply_gates=True, small_pore_knudsen_factor=1e-4
-):
-    """
-    라벨/밴드 공용: 동일한 규칙/감쇠를 적용한 내재 퍼미언스 dict 반환
-    + BLOCK 게이트: (i) 입체 차단, (ii) 확산 불가 조건에서 다른 항을 0으로
-    """
-    L_m = max(float(L_nm), 1e-3) * 1e-9
-    M   = GAS_PARAMS[gas]["M"]
-    d_eff_A = effective_diameter_A(gas, T, alpha)
-
-    Pi = {
-        "Blocked":   PI_TINY,
-        "Sieving":   pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A),
-        "Knudsen":   pintr_knudsen_SI(d_nm, T, M, L_m),
-        "Surface":   pintr_surface_SI(d_nm, gas, T, L_m, dqdp),
-        "Capillary": pintr_capillary_SI(d_nm, rp, L_m),
-        "Solution":  pintr_solution_SI(gas, T, L_m, dqdp),
-    }
-
-    if apply_gates:
-        # (A) Capillary 게이트
-        if not (d_nm >= 2.0 and rp > 0.5):
-            Pi["Capillary"] = 0.0
-
-        # (B) Knudsen 감쇠: 초소기공에서 추가 감쇠
-        if d_nm <= 0.5:
-            Pi["Knudsen"] *= small_pore_knudsen_factor
-
-        # (C) 기존 큰-기공/rp 영역 감쇠(사용 중이면)
-        Pi = damp_knudsen_if_needed(Pi, d_nm, rp)
-
-    # ---------------- BLOCK 게이트 ----------------
-    if st.session_state.get("block_gate_on", False):
-        # 1) 입체 차단
-        pA = d_nm * 10.0  # nm → Å
-        steric_block = (pA <= (d_eff_A - SIEVE_BAND_A)) or (d_nm <= 0.08)  # 0.08 nm ~ 극소기공
-        # 2) 확산 불가
-        dqdp_cut = float(st.session_state.get("dqdp_cut_val", 1e-10))
-        diffusion_off = (abs(dqdp) < dqdp_cut) and (rp <= 0.05)
-
-        if steric_block or diffusion_off:
-            for k in ("Sieving", "Knudsen", "Surface", "Capillary", "Solution"):
-                Pi[k] = 0.0
-    # ------------------------------------------------
-
-    return Pi
-
 MECH_ORDER = ["Blocked","Sieving","Knudsen","Surface","Capillary","Solution"]
 MECH_COLOR = {
     "Blocked":"#bdbdbd","Sieving":"#1f78b4","Knudsen":"#33a02c",
@@ -259,31 +210,58 @@ def pintr_capillary_SI(d_nm, rp, L_m):
     return 1e-7*np.sqrt(r_m)/L_m
 
 def pintr_solution_SI(gas, T, L_m, dqdp):
-    # ← 수정: Solution multiplier 적용
     Dsol = D0_SOL*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
     mult = st.session_state.get("sol_mult", 1.0)
     return max(mult * (Dsol/L_m) * (dqdp*500.0), 0.0)
 
-def _series_parallel(Pp,Pd,eps=1e-30):
-    if not np.isfinite(Pp): Pp=0.0
-    if not np.isfinite(Pd): Pd=0.0
-    if Pp<=eps and Pd<=eps: return PI_TINY
-    if Pp<=eps: return Pd
-    if Pd<=eps: return Pp
-    return 1.0/((1.0/(Pp+eps))+(1.0/(Pd+eps)))
+def intrinsic_permeances(
+    gas, T, Pbar, d_nm, rp, L_nm, dqdp, alpha,
+    apply_gates=True, small_pore_knudsen_factor=1e-4
+):
+    """
+    라벨/밴드 공용: 동일 규칙/감쇠를 적용한 내재 퍼미언스 dict 반환
+    + BLOCK 게이트: (i) 입체 차단, (ii) 확산 불가 조건에서 다른 항을 0으로
+    """
+    L_m = max(float(L_nm), 1e-3) * 1e-9
+    M   = GAS_PARAMS[gas]["M"]
+    d_eff_A = effective_diameter_A(gas, T, alpha)
 
-def dsl_loading_and_slope_b(gas,T,P_bar,relP,q1,q2,b1,b2):
-    P0=P_bar*1e5
-    b1=max(float(b1),0.0); b2=max(float(b2),0.0)
-    q1_molkg=q1*1e-3*1e3; q2_molkg=q2*1e-3*1e3
-    q_vec=np.zeros_like(relP,float); dqdp=np.zeros_like(relP,float)
-    for i,rp in enumerate(relP):
-        P=max(float(rp),1e-9)*P0
-        th1=(b1*P)/(1.0+b1*P); th2=(b2*P)/(1.0+b2*P)
-        q_molkg=q1_molkg*th1 + q2_molkg*th2
-        q_vec[i]=q_molkg/1e3
-        dqdp[i]=(q1_molkg*b1)/(1.0+b1*P)**2 + (q2_molkg*b2)/(1.0+b2*P)**2
-    return q_vec,dqdp
+    Pi = {
+        "Blocked":   PI_TINY,
+        "Sieving":   pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A),
+        "Knudsen":   pintr_knudsen_SI(d_nm, T, M, L_m),
+        "Surface":   pintr_surface_SI(d_nm, gas, T, L_m, dqdp),
+        "Capillary": pintr_capillary_SI(d_nm, rp, L_m),
+        "Solution":  pintr_solution_SI(gas, T, L_m, dqdp),
+    }
+
+    if apply_gates:
+        # (A) Capillary 게이트
+        if not (d_nm >= 2.0 and rp > 0.5):
+            Pi["Capillary"] = 0.0
+
+        # (B) Knudsen 감쇠: 초소기공에서 추가 감쇠
+        if d_nm <= 0.5:
+            Pi["Knudsen"] *= small_pore_knudsen_factor
+
+        # (C) 기존 큰-기공/rp 영역 감쇠(사용 중이면)
+        Pi = damp_knudsen_if_needed(Pi, d_nm, rp)
+
+    # ---------------- BLOCK 게이트 ----------------
+    if st.session_state.get("block_gate_on", False):
+        # 1) 입체 차단
+        pA = d_nm * 10.0  # nm → Å
+        steric_block = (pA <= (d_eff_A - SIEVE_BAND_A)) or (d_nm <= 0.08)  # 0.08 nm ~ 극소기공
+        # 2) 확산 불가
+        dqdp_cut = float(st.session_state.get("dqdp_cut_val", 1e-10))
+        diffusion_off = (abs(dqdp) < dqdp_cut) and (rp <= 0.05)
+
+        if steric_block or diffusion_off:
+            for k in ("Sieving", "Knudsen", "Surface", "Capillary", "Solution"):
+                Pi[k] = 0.0
+    # ------------------------------------------------
+
+    return Pi
 
 def weights_from_intrinsic(Pi_intr, gamma=0.8):
     keys = MECH_ORDER
@@ -326,21 +304,26 @@ def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp1,P0bar,a
     rgba = np.array([to_rgba(MECH_COLOR[n]) for n in names])[None, :, :]
     return rgba, names
 
-def pressure_schedule_series(t,P0_bar,ramp,tau):
-    if isinstance(ramp,str) and ramp.lower().startswith("step"):
-        return np.full_like(t,float(P0_bar),dtype=float)
-    tau=max(float(tau),1e-9)
-    return float(P0_bar)*(1.0-np.exp(-t/tau))
+def _series_parallel(Pp,Pd,eps=1e-30):
+    if not np.isfinite(Pp): Pp=0.0
+    if not np.isfinite(Pd): Pd=0.0
+    if Pp<=eps and Pd<=eps: return PI_TINY
+    if Pp<=eps: return Pd
+    if Pd<=eps: return Pp
+    return 1.0/((1.0/(Pp+eps))+(1.0/(Pd+eps)))
 
-def ldf_evolve_q(t,P_bar_t,qeq_fn,kLDF,q0=0.0):
-    q_dyn=np.zeros_like(t,float); dqdp=np.zeros_like(t,float); q=float(q0)
-    for i in range(len(t)):
-        Pbar=float(P_bar_t[i]); qeq, slope = qeq_fn(Pbar)
-        dqdp[i]=slope
-        if i>0:
-            dt=float(t[i]-t[i-1]); q += dt*float(kLDF)*(qeq - q)
-        q_dyn[i]=q
-    return q_dyn, dqdp
+def dsl_loading_and_slope_b(gas,T,P_bar,relP,q1,q2,b1,b2):
+    P0=P_bar*1e5
+    b1=max(float(b1),0.0); b2=max(float(b2),0.0)
+    q1_molkg=q1*1e-3*1e3; q2_molkg=q2*1e-3*1e3
+    q_vec=np.zeros_like(relP,float); dqdp=np.zeros_like(relP,float)
+    for i,rp in enumerate(relP):
+        P=max(float(rp),1e-9)*P0
+        th1=(b1*P)/(1.0+b1*P); th2=(b2*P)/(1.0+b2*P)
+        q_molkg=q1_molkg*th1 + q2_molkg*th2
+        q_vec[i]=q_molkg/1e3
+        dqdp[i]=(q1_molkg*b1)/(1.0+b1*P)**2 + (q2_molkg*b2)/(1.0+b2*P)**2
+    return q_vec,dqdp
 
 def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q_other, alpha):
     Pi = np.zeros_like(relP, float)
@@ -362,6 +345,22 @@ def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q
         Pi[i] = Pi0 * theta
     return Pi
 
+def pressure_schedule_series(t,P0_bar,ramp,tau):
+    if isinstance(ramp,str) and ramp.lower().startswith("step"):
+        return np.full_like(t,float(P0_bar),dtype=float)
+    tau=max(float(tau),1e-9)
+    return float(P0_bar)*(1.0-np.exp(-t/tau))
+
+def ldf_evolve_q(t,P_bar_t,qeq_fn,kLDF,q0=0.0):
+    q_dyn=np.zeros_like(t,float); dqdp=np.zeros_like(t,float); q=float(q0)
+    for i in range(len(t)):
+        Pbar=float(P_bar_t[i]); qeq, slope = qeq_fn(Pbar)
+        dqdp[i]=slope
+        if i>0:
+            dt=float(t[i]-t[i-1]); q += dt*float(kLDF)*(qeq - q)
+        q_dyn[i]=q
+    return q_dyn, dqdp
+
 def run_gas_membrane():
     st.header("Gas Membrane Simulator")
 
@@ -376,6 +375,26 @@ def run_gas_membrane():
         gases = list(GAS_PARAMS.keys())
         gas1  = st.selectbox("Gas1 (numerator)",   gases, index=gases.index("CO2"), key="gas1_g")
         gas2  = st.selectbox("Gas2 (denominator)", gases, index=gases.index("CH4"), key="gas2_g")
+
+        # ---- Quantum size (α): auto/manual + λ,d_eff 표시 ----
+        st.subheader("Quantum size effect (α)")
+        alpha_mode = st.radio("α mode", ["Auto (by T & pore)", "Manual"], index=0, key="alpha_mode_g")
+
+        lam_m = de_broglie_lambda_m(T, GAS_PARAMS[gas1]["M"])  # [m]
+        lam_A = lam_m * 1e10                                    # [Å]
+
+        if alpha_mode == "Auto (by T & pore)":
+            alpha_val = alpha_auto_by_temperature(T, a0=0.05, T_ref=300.0, a_min=0.0, a_max=0.60, d_nm=d_nm)
+            st.session_state["alpha_g"] = float(alpha_val)
+            st.caption(f"λ({gas1},{T:.1f}K) ≈ {lam_A:.2f} Å")
+            d_effA = effective_diameter_A(gas1, T, st.session_state["alpha_g"])
+            st.caption(f"d_eff({gas1}) ≈ {d_effA:.2f} Å  (α={st.session_state['alpha_g']:.3f}, d_vdw={GAS_PARAMS[gas1]['d']:.2f} Å)")
+        else:
+            alpha_in = nudged_slider("α (manual)", 0.0, 0.60, 0.005, 0.05, key="alpha_g", unit="–",
+                                     help="값이 클수록 유효 지름 d_eff = d_vdw − α·λ 가 작아짐")
+            st.caption(f"λ({gas1},{T:.1f}K) ≈ {lam_A:.2f} Å")
+            d_effA = effective_diameter_A(gas1, T, alpha_in)
+            st.caption(f"d_eff({gas1}) ≈ {d_effA:.2f} Å")
 
         st.subheader("DSL parameters (q1,q2,b1,b2)")
         st.caption("Units: q — mmol/g, b — Pa⁻¹")
@@ -419,34 +438,13 @@ def run_gas_membrane():
         st.markdown("---")
         st.subheader("Mechanism tuning (advanced)")
         st.session_state["sol_mult"]  = log_slider("Solution multiplier", -2.0, 3.0, 0.1, 0.0,
-                                           key="sol_mult_g",  unit="×")
-        st.session_state["surf_mult"] = log_slider("Surface multiplier",  -2.0, 3.0, 0.1, 0.0,
-                                           key="surf_mult_g", unit="×")
-
-        st.markdown("---")
-        st.subheader("Blocking gate (advanced)")
-        # ✅ 수정: st.session_state에 대입 제거
-        st.checkbox("Enable strict BLOCK gate", value=True, key="block_gate_on")
-
-        st.session_state["dqdp_cut_val"] = log_slider(
-            "dq/dp cutoff for diffusion", -14.0, -6.0, 0.5, -10.0,
-            key="dqdp_cut_g", unit="(mol/kg)/Pa",
-            help="|dq/dp|<cutoff 이고 rₚ≤0.05면 Surface/Solution을 0으로 잘라 Blocked 우세 유도"
-        )
-
-        # ---------- (optional) tuning & block gates ----------
-        st.markdown("---")
-        st.subheader("Mechanism tuning (advanced)")
-        st.session_state["sol_mult"]  = log_slider("Solution multiplier", -2.0, 3.0, 0.1, 0.0,
                                                    key="sol_mult_g",  unit="×")
         st.session_state["surf_mult"] = log_slider("Surface multiplier",  -2.0, 3.0, 0.1, 0.0,
                                                    key="surf_mult_g", unit="×")
 
         st.markdown("---")
         st.subheader("Blocking gate (advanced)")
-        st.session_state["block_gate_on"] = st.checkbox(
-            "Enable strict BLOCK gate", value=True, key="block_gate_on"
-        )
+        st.checkbox("Enable strict BLOCK gate", value=True, key="block_gate_on")
         st.session_state["dqdp_cut_val"] = log_slider(
             "dq/dp cutoff for diffusion", -14.0, -6.0, 0.5, -10.0,
             key="dqdp_cut_g", unit="(mol/kg)/Pa",
@@ -454,7 +452,7 @@ def run_gas_membrane():
         )
 
     # =================== Compute ===================
-    alpha     = float(st.session_state["alpha_g"])
+    alpha = float(st.session_state.get("alpha_g", alpha_auto_by_temperature(T, d_nm=d_nm)))
     time_mode = (mode == "Time (transient LDF)")
 
     if time_mode:
@@ -747,7 +745,7 @@ def run_ion_membrane():
             Pj = i_now * dV
             dTdt = Pj/max(C_th,1e-9) - (T_old - T_amb)/max(tau_c, 1e-6)
 
-            kg = k_g  # log_slider 반환값은 이미 10^x 적용된 실값 → 그대로 사용
+            kg = k_g  # log_slider는 실값 반환
             drive = max(T_old - Tcrit, 0.0)
             dfdt = kg * drive * (1.0 - f_old)
             fv[k] = float(np.clip(f_old + dt*dfdt, 0.0, 1.0))
