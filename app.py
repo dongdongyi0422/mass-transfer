@@ -237,8 +237,8 @@ def weights_from_intrinsic(Pi_intr, gamma=0.8):
     return {k:float(w[i]) for i,k in enumerate(keys)}
 
 def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
-    if WEIGHT_MODE=="softmax" and DAMP_KNUDSEN and (d_nm>=2.0 and rp>=0.55):
-        Pi_intr["Knudsen"]*=1e-3
+    if WEIGHT_MODE=="softmax" and DAMP_KNUDSEN and (d_nm<=0.5):
+        Pi_intr["Knudsen"]*=1e-4
     return Pi_intr
 
 def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha):
