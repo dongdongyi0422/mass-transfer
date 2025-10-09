@@ -191,31 +191,45 @@ def pintr_knudsen_SI(d_nm, T, M, L_m):
 
 # ---------------- 수정 내용 ----------------
 
+# ---------------- physics-balanced permeance formulas ----------------
 def pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A):
+    """분자체 확산 — 표준 스케일 기준"""
     dA_eff = d_eff_A
-    pA = d_nm*10.0
+    pA = d_nm * 10.0
     delta = dA_eff - pA
+    # Sieving 약화: 고온/대기압 기준 10^-6~10^-8 사이
     if delta > 0:
-        return max(1e-6*np.exp(-(delta/DELTA_SOFT_A)**2)*np.exp(-E_SIEVE/(R*T)), PI_TINY)
-    x = max(1.0 - (dA_eff/pA)**2, 0.0); f = x**2
-    return max(1e-6*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
+        return max(5e-7*np.exp(-(delta/0.5)**2)*np.exp(-E_SIEVE/(R*T)), PI_TINY)
+    x = max(1.0 - (dA_eff/pA)**2, 0.0)
+    f = x**2
+    return max(5e-7*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
+
+def pintr_knudsen_SI(d_nm, T, M, L_m):
+    """Knudsen 확산 — 중간 기공 기준"""
+    r = max(d_nm*1e-9/2.0, 1e-12)
+    Dk = (2.0/3.0)*r*np.sqrt((8.0*R*T)/(np.pi*M))
+    return 0.3 * Dk/(L_m*R*T)  # 상대 약화
 
 def pintr_surface_SI(d_nm, gas, T, L_m, dqdp):
+    """Surface diffusion — dq/dp에 비례"""
     Ds = D0_SURF * np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
     mult = st.session_state.get("surf_mult", 1.0)
-    return max(mult * (Ds/L_m) * (dqdp * 2e6), 0.0)   # ★ 기존 500 → 2e6
+    return max(mult * (Ds/L_m) * (dqdp * 5e5), 0.0)  # 500 → 5e5 (물리 스케일 반영)
 
 def pintr_solution_SI(gas, T, L_m, dqdp):
-    Dsol = D0_SOL*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
+    """Solution diffusion — 낮은 dq/dp에서도 완만"""
+    Dsol = D0_SOL * np.exp(-1.8e4/(R*T)) / np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
     mult = st.session_state.get("sol_mult", 1.0)
-    return max(mult * (Dsol/L_m) * (dqdp * 2e6), 0.0)  # ★ 기존 500 → 2e6
+    return max(mult * (Dsol/L_m) * (dqdp * 1e5), 0.0)  # 완화
 
 def pintr_capillary_SI(d_nm, rp, L_m):
-    # ★ 조건 완화: 2.0→1.5, 0.5→0.4
+    """모세관 응축 — 큰 기공에서만"""
     if not (d_nm >= 1.5 and rp > 0.4):
         return 0.0
     r_m = max(d_nm*1e-9/2.0, 1e-12)
-    return 1e-6*np.sqrt(r_m)/L_m  # 1e-7 → 1e-6 로 약간 강화
+    base = 1e-6*np.sqrt(r_m)/L_m
+    # rₚ가 높을수록 강하게
+    return base * np.clip((rp - 0.4)/0.6, 0, 1)**0.5
 
 
 def intrinsic_permeances(
