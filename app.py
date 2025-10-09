@@ -360,46 +360,58 @@ def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q
 def run_gas_membrane():
     st.header("Gas Membrane Simulator")
 
+    # =================== Sidebar ===================
     with st.sidebar:
         st.subheader("Global Conditions")
-        T    = nudged_slider("Temperature",10.0,600.0,1.0,300.0,key="T_g",unit="K")
-        Pbar = nudged_slider("Total Pressure",0.1,10.0,0.1,1.0,key="Pbar_g",unit="bar")
-        d_nm = nudged_slider("Pore diameter",0.01,50.0,0.01,0.36,key="d_nm_g",unit="nm")
-        L_nm = nudged_slider("Membrane thickness",10.0,100000.0,1.0,100.0,key="L_nm_g",unit="nm")
+        T    = nudged_slider("Temperature", 10.0, 600.0, 1.0, 300.0, key="T_g",    unit="K")
+        Pbar = nudged_slider("Total Pressure", 0.1, 10.0, 0.1, 1.0,  key="Pbar_g", unit="bar")
+        d_nm = nudged_slider("Pore diameter", 0.01, 50.0, 0.01, 0.36, key="d_nm_g", unit="nm")
+        L_nm = nudged_slider("Membrane thickness", 10.0, 100000.0, 1.0, 100.0, key="L_nm_g", unit="nm")
 
-        gases=list(GAS_PARAMS.keys())
-        gas1=st.selectbox("Gas1 (numerator)",gases,index=gases.index("CO2"), key="gas1_g")
-        gas2=st.selectbox("Gas2 (denominator)",gases,index=gases.index("CH4"), key="gas2_g")
+        gases = list(GAS_PARAMS.keys())
+        gas1  = st.selectbox("Gas1 (numerator)",   gases, index=gases.index("CO2"), key="gas1_g")
+        gas2  = st.selectbox("Gas2 (denominator)", gases, index=gases.index("CH4"), key="gas2_g")
 
         st.subheader("DSL parameters (q1,q2,b1,b2)")
         st.caption("Units: q — mmol/g, b — Pa⁻¹")
-        q11=nudged_slider("q1 Gas1",0.0,100.0,0.01,0.70,key="q11_g",unit="mmol/g")
-        q12=nudged_slider("q2 Gas1",0.0,100.0,0.01,0.30,key="q12_g",unit="mmol/g")
-        b11=nudged_slider("b1 Gas1",1e-10,1e-1,1e-8,1e-5,key="b11_g",unit="Pa⁻¹",decimals=8)
-        b12=nudged_slider("b2 Gas1",1e-10,1e-1,1e-8,5e-6,key="b12_g",unit="Pa⁻¹",decimals=8)
+        q11 = nudged_slider("q1 Gas1", 0.0, 100.0, 0.01, 0.70, key="q11_g", unit="mmol/g")
+        q12 = nudged_slider("q2 Gas1", 0.0, 100.0, 0.01, 0.30, key="q12_g", unit="mmol/g")
+        b11 = nudged_slider("b1 Gas1", 1e-10, 1e-1, 1e-8, 1e-5, key="b11_g", unit="Pa⁻¹", decimals=8)
+        b12 = nudged_slider("b2 Gas1", 1e-10, 1e-1, 1e-8, 5e-6, key="b12_g", unit="Pa⁻¹", decimals=8)
 
-        q21=nudged_slider("q1 Gas2",0.0,100.0,0.01,0.70,key="q21_g",unit="mmol/g")
-        q22=nudged_slider("q2 Gas2",0.0,100.0,0.01,0.30,key="q22_g",unit="mmol/g")
-        b21=nudged_slider("b1 Gas2",1e-10,1e-1,1e-8,1e-5,key="b21_g",unit="Pa⁻¹",decimals=8)
-        b22=nudged_slider("b2 Gas2",1e-10,1e-1,1e-8,5e-6,key="b22_g",unit="Pa⁻¹",decimals=8)
+        q21 = nudged_slider("q1 Gas2", 0.0, 100.0, 0.01, 0.70, key="q21_g", unit="mmol/g")
+        q22 = nudged_slider("q2 Gas2", 0.0, 100.0, 0.01, 0.30, key="q22_g", unit="mmol/g")
+        b21 = nudged_slider("b1 Gas2", 1e-10, 1e-1, 1e-8, 1e-5, key="b21_g", unit="Pa⁻¹", decimals=8)
+        b22 = nudged_slider("b2 Gas2", 1e-10, 1e-1, 1e-8, 5e-6, key="b22_g", unit="Pa⁻¹", decimals=8)
 
         mode = st.radio("X-axis / Simulation mode",
-                        ["Relative pressure (P/P0)","Time (transient LDF)"],
+                        ["Relative pressure (P/P0)", "Time (transient LDF)"],
                         index=0, key="mode_g")
 
-        if mode=="Time (transient LDF)":
+        # time-mode settings
+        if mode == "Time (transient LDF)":
             st.subheader("Transient (LDF) settings")
-            t_end=nudged_slider("Total time",0.1,3600.0,0.1,120.0,key="t_end_g",unit="s")
-            dt   =nudged_slider("Time step",1e-3,10.0,1e-3,0.1,key="dt_g",unit="s")
-            kLDF =nudged_slider("k_LDF",1e-4,10.0,1e-4,0.05,key="kLDF_g",unit="s⁻¹")
-            P0bar=nudged_slider("Feed P₀",0.1,10.0,0.1,Pbar,key="P0bar_g",unit="bar")
-            ramp =st.selectbox("Pressure schedule P(t)",
-                               ["Step (P=P₀)","Exp ramp: P₀(1-exp(-t/τ))"],index=1, key="ramp_g")
-            tau  =nudged_slider("τ (only for exp ramp)",1e-3,1000.0,1e-3,5.0,key="tau_g",unit="s")
+            t_end = nudged_slider("Total time", 0.1, 3600.0, 0.1, 120.0, key="t_end_g", unit="s")
+            dt    = nudged_slider("Time step", 1e-3, 10.0, 1e-3, 0.1, key="dt_g", unit="s")
+            kLDF  = nudged_slider("k_LDF", 1e-4, 10.0, 1e-4, 0.05, key="kLDF_g", unit="s⁻¹")
+            P0bar = nudged_slider("Feed P₀", 0.1, 10.0, 0.1, Pbar, key="P0bar_g", unit="bar")
+            ramp  = st.selectbox("Pressure schedule P(t)",
+                                 ["Step (P=P₀)", "Exp ramp: P₀(1-exp(-t/τ))"], index=1, key="ramp_g")
+            tau   = nudged_slider("τ (only for exp ramp)", 1e-3, 1000.0, 1e-3, 5.0, key="tau_g", unit="s")
+
+        # r_p focus for labels & optional band zoom (relative-pressure mode only)
+        rp_focus = None
+        if mode == "Relative pressure (P/P0)":
+            rp_focus = nudged_slider("rₚ focus for labels", 0.01, 0.99, 0.01, 0.35,
+                                     key="rp_focus_g", unit="–",
+                                     help="라벨(승자)을 평가할 rₚ. Capillary 게이트에도 이 rₚ이 사용됩니다.")
+            zoom_band = st.checkbox("Zoom band around rₚ focus", value=False, key="zoom_band_g")
+            zoom_half = nudged_slider("Zoom half-width Δrₚ", 0.01, 0.49, 0.01, 0.15,
+                                      key="zoom_half_g", unit="–",
+                                      help="밴드를 [rₚ-Δ, rₚ+Δ] 범위만 표시")
 
         st.markdown("---")
         st.subheader("Quantum size correction α (De Broglie)")
-
         auto_alpha = st.checkbox("Auto-set α from temperature", value=True,
                                  help="α(T)=a₀·√(T₀/T), 좁은 기공에서 약간 강화", key="autoalpha_g")
         a0 = nudged_slider("Auto α scale (a₀)", 0.00, 0.40, 0.01, 0.05, key="a0_g")
@@ -410,95 +422,120 @@ def run_gas_membrane():
         if auto_alpha:
             alpha_calc = alpha_auto_by_temperature(T, a0=a0, T_ref=300.0, a_min=0.0, a_max=0.60, d_nm=d_nm)
             st.session_state["alpha_g"] = alpha_calc
-            st.number_input("α (auto)", value=float(alpha_calc), format="%.4f", disabled=True, key="alpha_auto_display_g")
+            st.number_input("α (auto)", value=float(alpha_calc), format="%.4f",
+                            disabled=True, key="alpha_auto_display_g")
         else:
-            st.session_state["alpha_g"] = nudged_slider("Manual α", 0.0, 0.60, 0.01, float(st.session_state["alpha_g"]),
+            st.session_state["alpha_g"] = nudged_slider("Manual α", 0.0, 0.60, 0.01,
+                                                        float(st.session_state["alpha_g"]),
                                                         key="alpha_manual_g")
 
-                # ---------------------------------------------
-                # BLOCK 게이트 옵션 (Blocked를 확실히 보이게)
-                # ---------------------------------------------
-                st.markdown("---")
-                st.subheader("Blocking gate (advanced)")
-                # 엄격 차단 토글
-                st.session_state["block_gate_on"] = st.checkbox(
-                    "Enable strict BLOCK gate", value=True, key="block_gate_on"
-                )
-                # |dq/dp|가 이 컷오프보다 작고 r_p도 매우 낮으면 확산계열(Surface/Solution) 차단
-                st.session_state["dqdp_cut_val"] = log_slider(
-                    "dq/dp cutoff for diffusion",
-                    -14.0, -6.0, 0.5, -10.0,
-                    key="dqdp_cut_g",
-                    unit="(mol/kg)/Pa",
-                    help="이 값보다 |dq/dp|가 작고 rₚ≤0.05면 확산 계열을 0으로 잘라 Blocked 우세 유도"
-                )
-
-        lamA = de_broglie_lambda_m(T, GAS_PARAMS[gas1]["M"]) * 1e10  # Å
+        # De Broglie λ, d_eff 표시
+        lamA   = de_broglie_lambda_m(T, GAS_PARAMS[gas1]["M"]) * 1e10  # Å
         d_effA = effective_diameter_A(gas1, T, float(st.session_state["alpha_g"]))
-        col_l, col_r = st.columns(2)
-        with col_l:
-            st.number_input("De Broglie λ (Gas1, Å)", value=float(lamA), format="%.3f", disabled=True, key="lam_display")
-        with col_r:
-            st.number_input("Effective diameter d_eff (Å)", value=float(d_effA), format="%.3f", disabled=True, key="deff_display")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.number_input("De Broglie λ (Gas1, Å)", value=float(lamA), format="%.3f",
+                            disabled=True, key="lam_display")
+        with c2:
+            st.number_input("Effective diameter d_eff (Å)", value=float(d_effA), format="%.3f",
+                            disabled=True, key="deff_display")
 
-    alpha = float(st.session_state["alpha_g"])
+        # ---------- (optional) tuning & block gates ----------
+        st.markdown("---")
+        st.subheader("Mechanism tuning (advanced)")
+        st.session_state["sol_mult"]  = log_slider("Solution multiplier", -2.0, 3.0, 0.1, 0.0,
+                                                   key="sol_mult_g",  unit="×")
+        st.session_state["surf_mult"] = log_slider("Surface multiplier",  -2.0, 3.0, 0.1, 0.0,
+                                                   key="surf_mult_g", unit="×")
+
+        st.markdown("---")
+        st.subheader("Blocking gate (advanced)")
+        st.session_state["block_gate_on"] = st.checkbox(
+            "Enable strict BLOCK gate", value=True, key="block_gate_on"
+        )
+        st.session_state["dqdp_cut_val"] = log_slider(
+            "dq/dp cutoff for diffusion", -14.0, -6.0, 0.5, -10.0,
+            key="dqdp_cut_g", unit="(mol/kg)/Pa",
+            help="|dq/dp|<cutoff 이고 rₚ≤0.05면 Surface/Solution을 0으로 잘라 Blocked 우세 유도"
+        )
+
+    # =================== Compute ===================
+    alpha     = float(st.session_state["alpha_g"])
     time_mode = (mode == "Time (transient LDF)")
 
     if time_mode:
-        t=np.arange(0.0, st.session_state["t_end_g"]+st.session_state["dt_g"], st.session_state["dt_g"])
-        P_bar_t=pressure_schedule_series(t, st.session_state["P0bar_g"], st.session_state["ramp_g"], st.session_state["tau_g"])
-        relP=np.clip(P_bar_t/float(st.session_state["P0bar_g"]),1e-6,0.9999)
+        t = np.arange(0.0, st.session_state["t_end_g"] + st.session_state["dt_g"], st.session_state["dt_g"])
+        P_bar_t = pressure_schedule_series(t, st.session_state["P0bar_g"],
+                                           st.session_state["ramp_g"], st.session_state["tau_g"])
+        relP = np.clip(P_bar_t / float(st.session_state["P0bar_g"]), 1e-6, 0.9999)
 
         def qeq_g1(Pbar_scalar):
-            rp=float(np.clip(Pbar_scalar/float(Pbar),1e-6,0.9999))
-            qv,dv=dsl_loading_and_slope_b(gas1,T,Pbar,np.array([rp]),q11,q12,b11,b12)
-            return float(qv[0]),float(dv[0])
+            rp = float(np.clip(Pbar_scalar/float(Pbar), 1e-6, 0.9999))
+            qv, dv = dsl_loading_and_slope_b(gas1, T, Pbar, np.array([rp]), q11, q12, b11, b12)
+            return float(qv[0]), float(dv[0])
 
         def qeq_g2(Pbar_scalar):
-            rp=float(np.clip(Pbar_scalar/float(Pbar),1e-6,0.9999))
-            qv,dv=dsl_loading_and_slope_b(gas2,T,Pbar,np.array([rp]),q21,q22,b21,b22)
-            return float(qv[0]),float(dv[0])
+            rp = float(np.clip(Pbar_scalar/float(Pbar), 1e-6, 0.9999))
+            qv, dv = dsl_loading_and_slope_b(gas2, T, Pbar, np.array([rp]), q21, q22, b21, b22)
+            return float(qv[0]), float(dv[0])
 
-        q1_dyn,dqdp1=ldf_evolve_q(t,P_bar_t,qeq_g1,st.session_state["kLDF_g"],0.0)
-        q2_dyn,dqdp2=ldf_evolve_q(t,P_bar_t,qeq_g2,st.session_state["kLDF_g"],0.0)
+        q1_dyn, dqdp1 = ldf_evolve_q(t, P_bar_t, qeq_g1, st.session_state["kLDF_g"], 0.0)
+        q2_dyn, dqdp2 = ldf_evolve_q(t, P_bar_t, qeq_g2, st.session_state["kLDF_g"], 0.0)
 
-        Pi1=permeance_series_SI(d_nm,gas1,gas2,T,Pbar,relP,L_nm,q1_dyn,dqdp1,q2_dyn,alpha)
-        Pi2=permeance_series_SI(d_nm,gas2,gas1,T,Pbar,relP,L_nm,q2_dyn,dqdp2,q1_dyn,alpha)
+        Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_dyn, dqdp1, q2_dyn, alpha)
+        Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_dyn, dqdp2, q1_dyn, alpha)
 
-        X_vals=t; X_label="Time (s)"
+        X_vals, X_label = t, "Time (s)"
+
     else:
-        relP=np.linspace(0.01,0.99,500)
-        q1_mg,dqdp1=dsl_loading_and_slope_b(gas1,T,Pbar,relP,q11,q12,b11,b12)
-        q2_mg,dqdp2=dsl_loading_and_slope_b(gas2,T,Pbar,relP,q21,q22,b21,b22)
-        Pi1=permeance_series_SI(d_nm,gas1,gas2,T,Pbar,relP,L_nm,q1_mg,dqdp1,q2_mg,alpha)
-        Pi2=permeance_series_SI(d_nm,gas2,gas1,T,Pbar,relP,L_nm,q2_mg,dqdp2,q1_mg,alpha)
-        X_vals=relP; X_label=r"Relative pressure, $P/P_0$ (–)"
+        # relative-pressure mode
+        if st.session_state.get("zoom_band_g", False):
+            c = float(st.session_state.get("rp_focus_g", 0.35))
+            w = float(st.session_state.get("zoom_half_g", 0.15))
+            rmin, rmax = max(0.01, c - w), min(0.99, c + w)
+            relP = np.linspace(rmin, rmax, 400)
+        else:
+            relP = np.linspace(0.01, 0.99, 500)
 
-    Sel = np.divide(Pi1,Pi2,out=np.zeros_like(Pi1),where=(Pi2>0))
-    Pi1_gpu = Pi1/GPU_UNIT; Pi2_gpu = Pi2/GPU_UNIT
+        q1_mg, dqdp1 = dsl_loading_and_slope_b(gas1, T, Pbar, relP, q11, q12, b11, b12)
+        q2_mg, dqdp2 = dsl_loading_and_slope_b(gas2, T, Pbar, relP, q21, q22, b21, b22)
+        Pi1 = permeance_series_SI(d_nm, gas1, gas2, T, Pbar, relP, L_nm, q1_mg, dqdp1, q2_mg, alpha)
+        Pi2 = permeance_series_SI(d_nm, gas2, gas1, T, Pbar, relP, L_nm, q2_mg, dqdp2, q1_mg, alpha)
 
+        X_vals, X_label = relP, r"Relative pressure, $P/P_0$ (–)"
+
+    Sel     = np.divide(Pi1, Pi2, out=np.zeros_like(Pi1), where=(Pi2 > 0))
+    Pi1_gpu = Pi1 / GPU_UNIT
+    Pi2_gpu = Pi2 / GPU_UNIT
+
+    # =================== Plots ===================
     colA, colB = st.columns([1, 2])
+
     with colB:
-        # Mechanism band
+        # Mechanism band (uses the same intrinsic logic)
         figBand, axBand = plt.subplots(figsize=(9, 0.7))
         if time_mode:
-            rgba,_ = mechanism_band_rgba_time(gas1,gas2,T,Pbar,d_nm,L_nm,t,P_bar_t,dqdp1,st.session_state["P0bar_g"],alpha)
-            x_min, x_max = float(t[0]), float(t[-1]); x_ticks = np.linspace(x_min,x_max,6)
+            rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1,
+                                               st.session_state["P0bar_g"], alpha)
+            x_min, x_max = float(t[0]), float(t[-1])
+            x_ticks = np.linspace(x_min, x_max, 6)
         else:
-            rgba,_ = mechanism_band_rgba(gas1,gas2,T,Pbar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha)
-            x_min, x_max = 0.0, 1.0; x_ticks = [0,0.2,0.4,0.6,0.8,1.0]
-        axBand.imshow(rgba, extent=(x_min,x_max,0,1), aspect="auto", origin="lower")
-        axBand.set_xlim(x_min,x_max); axBand.set_xticks(x_ticks); axBand.set_yticks([])
+            rgba, _ = mechanism_band_rgba(gas1, gas2, T, Pbar, d_nm, relP, L_nm, q11, q12, b11, b12, alpha)
+            x_min, x_max = X_vals[0], X_vals[-1]
+            x_ticks = np.linspace(x_min, x_max, 6)
+        axBand.imshow(rgba, extent=(x_min, x_max, 0, 1), aspect="auto", origin="lower")
+        axBand.set_xlim(x_min, x_max); axBand.set_xticks(x_ticks); axBand.set_yticks([])
         axBand.set_xlabel(X_label)
-        handles=[plt.Rectangle((0,0),1,1,fc=MECH_COLOR[n],ec='none',label=n) for n in MECH_ORDER]
-        leg=axBand.legend(handles=handles,loc="upper center",bbox_to_anchor=(0.5,-0.7),ncol=6,frameon=True)
+        handles = [plt.Rectangle((0,0),1,1,fc=MECH_COLOR[n], ec='none', label=n) for n in MECH_ORDER]
+        leg = axBand.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.7),
+                            ncol=6, frameon=True)
         leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
         st.pyplot(figBand, use_container_width=True); plt.close(figBand)
 
-        # Permeance
-        fig1, ax1 = plt.subplots(figsize=(9,3))
+        # Permeance (GPU)
+        fig1, ax1 = plt.subplots(figsize=(9, 3))
         ax1.plot(X_vals, Pi1_gpu, label=f"{gas1}")
-        ax1.plot(X_vals, Pi2_gpu, '--', label=f"{gas2}")
+        ax1.plot(X_vals, Pi2_gpu, "--", label=f"{gas2}")
         ax1.set_xlabel(X_label); ax1.set_ylabel(r"$\Pi$ (GPU)")
         ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
         ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
@@ -507,7 +544,7 @@ def run_gas_membrane():
         st.pyplot(fig1, use_container_width=True); plt.close(fig1)
 
         # Selectivity
-        fig2, ax2 = plt.subplots(figsize=(9,3))
+        fig2, ax2 = plt.subplots(figsize=(9, 3))
         ax2.plot(X_vals, Sel, label=f"{gas1}/{gas2}")
         ax2.set_xlabel(X_label); ax2.set_ylabel("Selectivity (–)")
         ax2.ticklabel_format(axis='y', style='plain', useOffset=False)
@@ -518,25 +555,28 @@ def run_gas_membrane():
 
     with colA:
         st.subheader("Mechanism (synced with band)")
+        # 라벨 평가 r_p 선택
+        if time_mode:
+            rp_mid = float(np.clip(P_bar_t/float(st.session_state["P0bar_g"]), 1e-6, 0.9999)[len(t)//2])
+            dq_mid = float(dqdp1[len(dqdp1)//2]) if len(dqdp1)>0 else 0.0
+        else:
+            if rp_focus is None:
+                rp_mid = float(relP[len(relP)//2])
+            else:
+                rp_mid = float(rp_focus)
+            # dq/dp는 rp_mid에 가장 가까운 인덱스를 사용
+            idx = int(np.argmin(np.abs(relP - rp_mid)))
+            dq_mid = float(dqdp1[idx]) if len(dqdp1)>0 else 0.0
 
-        # 중간 지점(rp_mid) 선택 (Time 모드면 시간 중간, P/P0 모드면 배열 중간)
-        rp_mid = (np.clip(P_bar_t/float(st.session_state["P0bar_g"]),1e-6,0.9999)[len(t)//2] if time_mode
-                  else float(relP[len(relP)//2]))
-        dq_mid = float(dqdp1[len(dqdp1)//2]) if np.ndim(dqdp1)>0 and len(dqdp1)>0 else 0.0
-    
         cand = intrinsic_permeances(
             gas=gas1, T=T, Pbar=Pbar, d_nm=d_nm, rp=rp_mid,
             L_nm=L_nm, dqdp=dq_mid, alpha=alpha,
             apply_gates=True, small_pore_knudsen_factor=1e-4
         )
         winner = max(cand, key=cand.get)
-    
-        st.markdown(
-            f"**Mechanism (synced):** `{winner}`  |  **Best intrinsic:** `{winner}`"
-        )
+
+        st.markdown(f"**Mechanism (synced):** `{winner}`  |  **Best intrinsic:** `{winner}`")
         st.caption("라벨/밴드는 동일한 내재식, 동일 게이트/감쇠로 계산됩니다.")
-
-
 
 # =====================================================================
 # MODE 2 — ION MEMBRANE (steady + crack 열폭주 transient)
