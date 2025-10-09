@@ -1,9 +1,9 @@
 # app.py — Unified Transport Simulators (Gas / Ion / Vascular)
 # - 모든 슬라이더에 대응하는 입력칸(number_input) 제공
+# - Gas membrane: α(드브로이) 자동/수동 + λ,d_eff 표시, 메커니즘 밴드/퍼미언스/선택도
 # - Ion membrane: Bulk conc sliders + K&D 자동(T/η) + 수동 오버라이드 옵션
+#                 + (NEW) crack 유도 열폭주 시뮬레이션(Transient)
 # - Drug in vessel: Db 자동 보정(water/plasma) 옵션 + Pv, k_elim 로그 슬라이더
-# - NEW: α(드브로이) 슬라이더 아래 숫자 입력칸 + λ,d_eff 표시
-# - NEW: Ion membrane — crack 유도 열폭주(Transient) 시각화
 
 import numpy as np
 import matplotlib
@@ -13,7 +13,7 @@ import streamlit as st
 from matplotlib.colors import to_rgba
 from matplotlib.ticker import ScalarFormatter
 
-# -------------------- page config (권장: 최상단) --------------------
+# -------------------- page config --------------------
 st.set_page_config(page_title="Unified Transport Simulators (Gas / Ion / Vascular)", layout="wide")
 
 # -------------------- constants --------------------
@@ -24,12 +24,9 @@ NA = 6.02214076e23          # 1/mol
 F  = 96485.33212            # C/mol
 
 # =====================================================================
-# Shared UI helpers  — 슬라이더 + 입력칸 동기화(플래그 방식, 안정)
+# Shared UI helpers  — 슬라이더 + 입력칸 동기화(안정 플래그 방식)
 # =====================================================================
 def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, help=None):
-    """
-    슬라이더 + 숫자 입력칸(아래). on_change 플래그로 '어느 쪽이 수정됐는지' 안정 판정.
-    """
     if key not in st.session_state:
         st.session_state[key] = float(vinit)
     if f"{key}__who" not in st.session_state:
@@ -41,10 +38,10 @@ def nudged_slider(label, vmin, vmax, vstep, vinit, key, unit="", decimals=3, hel
     def _mark_s(): st.session_state[f"{key}__who"] = "s"
     def _mark_n(): st.session_state[f"{key}__who"] = "n"
 
-    sld = st.slider(lab, float(vmin), float(vmax), float(st.session_state[key]), float(vstep),
-                    help=help, key=f"{key}__s", format=fmt, on_change=_mark_s)
-    num = st.number_input("", float(vmin), float(vmax), float(st.session_state[key]), float(vstep),
-                          key=f"{key}__n", format=fmt, on_change=_mark_n)
+    st.slider(lab, float(vmin), float(vmax), float(st.session_state[key]), float(vstep),
+              help=help, key=f"{key}__s", format=fmt, on_change=_mark_s)
+    st.number_input("", float(vmin), float(vmax), float(st.session_state[key]), float(vstep),
+                    key=f"{key}__n", format=fmt, on_change=_mark_n)
 
     if st.session_state[f"{key}__who"] == "n":
         new = float(st.session_state[f"{key}__n"])
@@ -65,10 +62,10 @@ def nudged_int(label, vmin, vmax, vstep, vinit, key, help=None):
     def _mark_s(): st.session_state[f"{key}__who"] = "s"
     def _mark_n(): st.session_state[f"{key}__who"] = "n"
 
-    sld = st.slider(label, int(vmin), int(vmax), int(st.session_state[key]), int(vstep),
-                    help=help, key=f"{key}__s", on_change=_mark_s)
-    num = st.number_input("", int(vmin), int(vmax), int(st.session_state[key]), int(vstep),
-                          key=f"{key}__n", on_change=_mark_n)
+    st.slider(label, int(vmin), int(vmax), int(st.session_state[key]), int(vstep),
+              help=help, key=f"{key}__s", on_change=_mark_s)
+    st.number_input("", int(vmin), int(vmax), int(st.session_state[key]), int(vstep),
+                    key=f"{key}__n", on_change=_mark_n)
 
     if st.session_state[f"{key}__who"] == "n":
         new = int(st.session_state[f"{key}__n"])
@@ -81,9 +78,6 @@ def nudged_int(label, vmin, vmax, vstep, vinit, key, help=None):
     return int(st.session_state[key])
 
 def log_slider(label, exp_min, exp_max, exp_step, exp_init, key, unit="", help=None):
-    """
-    로그 스케일 슬라이더(10^x). 슬라이더 아래 exp 입력칸 제공.
-    """
     if key not in st.session_state:
         st.session_state[key] = float(exp_init)
     if f"{key}__who" not in st.session_state:
@@ -94,10 +88,10 @@ def log_slider(label, exp_min, exp_max, exp_step, exp_init, key, unit="", help=N
     def _mark_s(): st.session_state[f"{key}__who"] = "s"
     def _mark_n(): st.session_state[f"{key}__who"] = "n"
 
-    exp_s = st.slider(lab, float(exp_min), float(exp_max), float(st.session_state[key]),
-                      float(exp_step), help=help, key=f"{key}__s", format="%.2f", on_change=_mark_s)
-    exp_n = st.number_input("exp (10^x)", float(exp_min), float(exp_max), float(st.session_state[key]),
-                            float(exp_step), key=f"{key}__n", format="%.2f", on_change=_mark_n)
+    st.slider(lab, float(exp_min), float(exp_max), float(st.session_state[key]),
+              float(exp_step), help=help, key=f"{key}__s", format="%.2f", on_change=_mark_s)
+    st.number_input("exp (10^x)", float(exp_min), float(exp_max), float(st.session_state[key]),
+                    float(exp_step), key=f"{key}__n", format="%.2f", on_change=_mark_n)
 
     if st.session_state[f"{key}__who"] == "n":
         exp_val = float(st.session_state[f"{key}__n"])
@@ -126,7 +120,7 @@ def D_temp_correction(D_ref: float, T_ref: float, T: float, eta_ref: float, eta:
 GPU_UNIT = 3.35e-10        # mol m^-2 s^-1 Pa^-1
 PI_TINY  = 1e-14
 
-# porous transport scales (고정 파라미터)
+# porous transport scales
 RHO_EFF   = 500.0
 D0_SURF   = 1e-9
 D0_SOL    = 1e-10
@@ -186,8 +180,146 @@ def mean_free_path_nm(T, P_bar, d_ang):
     P = P_bar*1e5; d = d_ang*1e-10
     return (kB*T/(np.sqrt(2)*np.pi*d*d*P))*1e9
 
-# ... (중략: 가스 모드의 pintr_* / DSL / weights / band / time-evolve 함수는 기존 그대로 유지)
-# 아래 run_gas_membrane()에서 α UI 부분만 확장됨
+def pintr_knudsen_SI(d_nm, T, M, L_m):
+    r = max(d_nm*1e-9/2.0, 1e-12)
+    Dk = (2.0/3.0)*r*np.sqrt((8.0*R*T)/(np.pi*M))
+    return Dk/(L_m*R*T)
+
+def pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A):
+    dA_eff = d_eff_A
+    pA = d_nm*10.0
+    delta = dA_eff - pA
+    if delta > 0:
+        return max(PI_SOFT_REF*np.exp(-(delta/DELTA_SOFT_A)**2)*np.exp(-E_SIEVE/(R*T)), PI_TINY)
+    x = max(1.0 - (dA_eff/pA)**2, 0.0); f = x**2
+    return max(3e-4*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
+
+def pintr_surface_SI(d_nm, gas, T, L_m, dqdp):
+    Ds = 1e-9*np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
+    return max((Ds/L_m)*(dqdp*500.0),0.0)
+
+def pintr_capillary_SI(d_nm, rp, L_m):
+    r_m = max(d_nm*1e-9/2.0, 1e-12)
+    thresh = np.exp(-120.0/(((d_nm/2.0)*rp*300.0)+1e-12))
+    if rp <= thresh: return 0.0
+    return 1e-7*np.sqrt(r_m)/L_m
+
+def pintr_solution_SI(gas, T, L_m, dqdp):
+    Dsol = 1e-10*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
+    return max((Dsol/L_m)*(dqdp*500.0),0.0)
+
+def _series_parallel(Pp,Pd,eps=1e-30):
+    if not np.isfinite(Pp): Pp=0.0
+    if not np.isfinite(Pd): Pd=0.0
+    if Pp<=eps and Pd<=eps: return PI_TINY
+    if Pp<=eps: return Pd
+    if Pd<=eps: return Pp
+    return 1.0/((1.0/(Pp+eps))+(1.0/(Pd+eps)))
+
+def dsl_loading_and_slope_b(gas,T,P_bar,relP,q1,q2,b1,b2):
+    P0=P_bar*1e5
+    b1=max(float(b1),0.0); b2=max(float(b2),0.0)
+    q1_molkg=q1*1e-3*1e3; q2_molkg=q2*1e-3*1e3
+    q_vec=np.zeros_like(relP,float); dqdp=np.zeros_like(relP,float)
+    for i,rp in enumerate(relP):
+        P=max(float(rp),1e-9)*P0
+        th1=(b1*P)/(1.0+b1*P); th2=(b2*P)/(1.0+b2*P)
+        q_molkg=q1_molkg*th1 + q2_molkg*th2
+        q_vec[i]=q_molkg/1e3
+        dqdp[i]=(q1_molkg*b1)/(1.0+b1*P)**2 + (q2_molkg*b2)/(1.0+b2*P)**2
+    return q_vec,dqdp
+
+def weights_from_intrinsic(Pi_intr, gamma=0.8):
+    keys = MECH_ORDER
+    x=np.array([np.log(max(float(Pi_intr.get(k,0.0)),1e-30)) for k in keys])
+    e=np.exp(gamma*x); s=float(e.sum())
+    w=e/s if s>0 and np.isfinite(s) else np.array([0,0,0,1,0,0],float)
+    return {k:float(w[i]) for i,k in enumerate(keys)}
+
+def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
+    if WEIGHT_MODE=="softmax" and DAMP_KNUDSEN and (d_nm>=2.0 and rp>=0.55):
+        Pi_intr["Knudsen"]*=1e-3
+    return Pi_intr
+
+def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha):
+    _,dv = dsl_loading_and_slope_b(g1,T,P_bar,relP,q11,q12,b11,b12)
+    L_m=max(float(L_nm),1e-3)*1e-9; M1=GAS_PARAMS[g1]["M"]
+    d_eff_A = effective_diameter_A(g1,T,alpha)
+    names=[]
+    for i,rp in enumerate(relP):
+        dq=float(dv[i])
+        Pi_intr={
+            "Blocked": PI_TINY,
+            "Sieving": pintr_sieving_SI(d_nm,g1,T,L_m,d_eff_A),
+            "Knudsen": pintr_knudsen_SI(d_nm,T,M1,L_m),
+            "Surface": pintr_surface_SI(d_nm,g1,T,L_m,dq),
+            "Capillary":pintr_capillary_SI(d_nm,float(rp),L_m),
+            "Solution": pintr_solution_SI(g1,T,L_m,dq),
+        }
+        Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,float(rp))
+        w=weights_from_intrinsic(Pi_intr)
+        names.append(max(w,key=w.get))
+    rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
+    return rgba, names
+
+def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp1,P0bar,alpha):
+    L_m=max(float(L_nm),1e-3)*1e-9; M1=GAS_PARAMS[g1]["M"]
+    rp_t=np.clip(P_bar_t/float(P0bar),1e-6,0.9999)
+    d_eff_A = effective_diameter_A(g1,T,alpha)
+    names=[]
+    for i in range(len(t_vec)):
+        rp=float(rp_t[i]); dq=float(dqdp1[i])
+        Pi_intr={
+            "Blocked": PI_TINY,
+            "Sieving": pintr_sieving_SI(d_nm,g1,T,L_m,d_eff_A),
+            "Knudsen": pintr_knudsen_SI(d_nm,T,M1,L_m),
+            "Surface": pintr_surface_SI(d_nm,g1,T,L_m,dq),
+            "Capillary":pintr_capillary_SI(d_nm,rp,L_m),
+            "Solution": pintr_solution_SI(g1,T,L_m,dq),
+        }
+        Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,rp)
+        w=weights_from_intrinsic(Pi_intr)
+        names.append(max(w,key=w.get))
+    rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
+    return rgba, names
+
+def pressure_schedule_series(t,P0_bar,ramp,tau):
+    if isinstance(ramp,str) and ramp.lower().startswith("step"):
+        return np.full_like(t,float(P0_bar),dtype=float)
+    tau=max(float(tau),1e-9)
+    return float(P0_bar)*(1.0-np.exp(-t/tau))
+
+def ldf_evolve_q(t,P_bar_t,qeq_fn,kLDF,q0=0.0):
+    q_dyn=np.zeros_like(t,float); dqdp=np.zeros_like(t,float); q=float(q0)
+    for i in range(len(t)):
+        Pbar=float(P_bar_t[i]); qeq, slope = qeq_fn(Pbar)
+        dqdp[i]=slope
+        if i>0:
+            dt=float(t[i]-t[i-1]); q += dt*float(kLDF)*(qeq - q)
+        q_dyn[i]=q
+    return q_dyn, dqdp
+
+def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q_other, alpha):
+    L_m=max(L_nm,1e-3)*1e-9; M=GAS_PARAMS[gas]["M"]
+    d_eff_A = effective_diameter_A(gas,T,alpha)
+    Pi=np.zeros_like(relP,float)
+    for i,rp in enumerate(relP):
+        Pi_intr={
+            "Blocked": PI_TINY,
+            "Sieving": pintr_sieving_SI(d_nm,gas,T,L_m,d_eff_A),
+            "Knudsen": pintr_knudsen_SI(d_nm,T,M,L_m),
+            "Surface": pintr_surface_SI(d_nm,gas,T,L_m,dqdp[i]),
+            "Capillary":pintr_capillary_SI(d_nm,rp,L_m),
+            "Solution": pintr_solution_SI(gas,T,L_m,dqdp[i]),
+        }
+        Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,rp)
+        w=weights_from_intrinsic(Pi_intr)
+        Pi_pore = w["Sieving"]*Pi_intr["Sieving"] + w["Knudsen"]*Pi_intr["Knudsen"] + w["Capillary"]*Pi_intr["Capillary"]
+        Pi_diff = w["Surface"]*Pi_intr["Surface"] + w["Solution"]*Pi_intr["Solution"]
+        Pi0=_series_parallel(Pi_pore,Pi_diff)
+        theta = (q_mmolg[i]/(q_mmolg[i]+q_other[i])) if (q_mmolg[i]+q_other[i])>0 else 0.0
+        Pi[i]=Pi0*theta
+    return Pi
 
 def run_gas_membrane():
     st.header("Gas Membrane Simulator")
@@ -232,7 +364,6 @@ def run_gas_membrane():
         st.markdown("---")
         st.subheader("Quantum size correction α (De Broglie)")
 
-        # NEW — α 자동/수동 + 슬라이더 아래 숫자 입력칸 + λ, d_eff 표시
         auto_alpha = st.checkbox("Auto-set α from temperature", value=True,
                                  help="α(T)=a₀·√(T₀/T), 좁은 기공에서 약간 강화", key="autoalpha_g")
         a0 = nudged_slider("Auto α scale (a₀)", 0.00, 0.40, 0.01, 0.05, key="a0_g")
@@ -243,14 +374,11 @@ def run_gas_membrane():
         if auto_alpha:
             alpha_calc = alpha_auto_by_temperature(T, a0=a0, T_ref=300.0, a_min=0.0, a_max=0.60, d_nm=d_nm)
             st.session_state["alpha_g"] = alpha_calc
-            # 슬라이더 아래 읽기전용 숫자 입력칸
             st.number_input("α (auto)", value=float(alpha_calc), format="%.4f", disabled=True, key="alpha_auto_display_g")
         else:
-            # 수동: 슬라이더 + 숫자입력칸 동기화형
             st.session_state["alpha_g"] = nudged_slider("Manual α", 0.0, 0.60, 0.01, float(st.session_state["alpha_g"]),
                                                         key="alpha_manual_g")
 
-        # 드브로이 λ와 d_eff 즉시 표시
         lamA = de_broglie_lambda_m(T, GAS_PARAMS[gas1]["M"]) * 1e10  # Å
         d_effA = effective_diameter_A(gas1, T, float(st.session_state["alpha_g"]))
         col_l, col_r = st.columns(2)
@@ -260,20 +388,114 @@ def run_gas_membrane():
             st.number_input("Effective diameter d_eff (Å)", value=float(d_effA), format="%.3f", disabled=True, key="deff_display")
 
     alpha = float(st.session_state["alpha_g"])
+    time_mode = (mode == "Time (transient LDF)")
 
-    # --------- compute/plot (기존 로직 그대로) ----------
-    # ... (가스 모드 계산/플롯 부분은 기존 코드 그대로 사용)
-    # NOTE: 너의 원본 run_gas_membrane() 내부 계산/플롯을 이 위치에 그대로 유지하세요.
-    # (너의 파일에 이미 전체 구현이 있으므로, α UI 파트만 위처럼 바꾸면 됩니다.)
-    # ------------------ 원본 가스모드 본문 붙여넣기 ------------------
+    if time_mode:
+        t=np.arange(0.0, st.session_state["t_end_g"]+st.session_state["dt_g"], st.session_state["dt_g"])
+        P_bar_t=pressure_schedule_series(t, st.session_state["P0bar_g"], st.session_state["ramp_g"], st.session_state["tau_g"])
+        relP=np.clip(P_bar_t/float(st.session_state["P0bar_g"]),1e-6,0.9999)
 
-    # ====== ↓↓↓ 여기에 너의 기존 가스모드 'compute/plot' 블록을 그대로 넣어주세요 ↓↓↓
-    # (Sel, Pi1_gpu, Pi2_gpu, band plot 등등… 기존 내용과 동일)
-    # ====== ↑↑↑ 기존 블록 유지 ↑↑↑
+        def qeq_g1(Pbar_scalar):
+            rp=float(np.clip(Pbar_scalar/float(Pbar),1e-6,0.9999))
+            qv,dv=dsl_loading_and_slope_b(gas1,T,Pbar,np.array([rp]),q11,q12,b11,b12)
+            return float(qv[0]),float(dv[0])
 
+        def qeq_g2(Pbar_scalar):
+            rp=float(np.clip(Pbar_scalar/float(Pbar),1e-6,0.9999))
+            qv,dv=dsl_loading_and_slope_b(gas2,T,Pbar,np.array([rp]),q21,q22,b21,b22)
+            return float(qv[0]),float(dv[0])
+
+        q1_dyn,dqdp1=ldf_evolve_q(t,P_bar_t,qeq_g1,st.session_state["kLDF_g"],0.0)
+        q2_dyn,dqdp2=ldf_evolve_q(t,P_bar_t,qeq_g2,st.session_state["kLDF_g"],0.0)
+
+        Pi1=permeance_series_SI(d_nm,gas1,gas2,T,Pbar,relP,L_nm,q1_dyn,dqdp1,q2_dyn,alpha)
+        Pi2=permeance_series_SI(d_nm,gas2,gas1,T,Pbar,relP,L_nm,q2_dyn,dqdp2,q1_dyn,alpha)
+
+        X_vals=t; X_label="Time (s)"
+    else:
+        relP=np.linspace(0.01,0.99,500)
+        q1_mg,dqdp1=dsl_loading_and_slope_b(gas1,T,Pbar,relP,q11,q12,b11,b12)
+        q2_mg,dqdp2=dsl_loading_and_slope_b(gas2,T,Pbar,relP,q21,q22,b21,b22)
+        Pi1=permeance_series_SI(d_nm,gas1,gas2,T,Pbar,relP,L_nm,q1_mg,dqdp1,q2_mg,alpha)
+        Pi2=permeance_series_SI(d_nm,gas2,gas1,T,Pbar,relP,L_nm,q2_mg,dqdp2,q1_mg,alpha)
+        X_vals=relP; X_label=r"Relative pressure, $P/P_0$ (–)"
+
+    Sel = np.divide(Pi1,Pi2,out=np.zeros_like(Pi1),where=(Pi2>0))
+    Pi1_gpu = Pi1/GPU_UNIT; Pi2_gpu = Pi2/GPU_UNIT
+
+    colA, colB = st.columns([1, 2])
+    with colB:
+        # Mechanism band
+        figBand, axBand = plt.subplots(figsize=(9, 0.7))
+        if time_mode:
+            rgba,_ = mechanism_band_rgba_time(gas1,gas2,T,Pbar,d_nm,L_nm,t,P_bar_t,dqdp1,st.session_state["P0bar_g"],alpha)
+            x_min, x_max = float(t[0]), float(t[-1]); x_ticks = np.linspace(x_min,x_max,6)
+        else:
+            rgba,_ = mechanism_band_rgba(gas1,gas2,T,Pbar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha)
+            x_min, x_max = 0.0, 1.0; x_ticks = [0,0.2,0.4,0.6,0.8,1.0]
+        axBand.imshow(rgba, extent=(x_min,x_max,0,1), aspect="auto", origin="lower")
+        axBand.set_xlim(x_min,x_max); axBand.set_xticks(x_ticks); axBand.set_yticks([])
+        axBand.set_xlabel(X_label)
+        handles=[plt.Rectangle((0,0),1,1,fc=MECH_COLOR[n],ec='none',label=n) for n in MECH_ORDER]
+        leg=axBand.legend(handles=handles,loc="upper center",bbox_to_anchor=(0.5,-0.7),ncol=6,frameon=True)
+        leg.get_frame().set_alpha(0.85); leg.get_frame().set_facecolor("white")
+        st.pyplot(figBand, use_container_width=True); plt.close(figBand)
+
+        # Permeance
+        fig1, ax1 = plt.subplots(figsize=(9,3))
+        ax1.plot(X_vals, Pi1_gpu, label=f"{gas1}")
+        ax1.plot(X_vals, Pi2_gpu, '--', label=f"{gas2}")
+        ax1.set_xlabel(X_label); ax1.set_ylabel(r"$\Pi$ (GPU)")
+        ax1.ticklabel_format(axis='y', style='plain', useOffset=False)
+        ax1.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+        ax1.get_yaxis().get_offset_text().set_visible(False)
+        ax1.grid(True); ax1.legend(title="Permeance (GPU)")
+        st.pyplot(fig1, use_container_width=True); plt.close(fig1)
+
+        # Selectivity
+        fig2, ax2 = plt.subplots(figsize=(9,3))
+        ax2.plot(X_vals, Sel, label=f"{gas1}/{gas2}")
+        ax2.set_xlabel(X_label); ax2.set_ylabel("Selectivity (–)")
+        ax2.ticklabel_format(axis='y', style='plain', useOffset=False)
+        ax2.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+        ax2.get_yaxis().get_offset_text().set_visible(False)
+        ax2.grid(True); ax2.legend()
+        st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+
+    with colA:
+        st.subheader("Mechanism (rule) vs intrinsic (Gas1) — reference")
+        def classify_mech(d_nm,g1,g2,T,P_bar,rp,alpha):
+            d_eff = effective_diameter_A(g1,T,alpha)
+            dmin = min(d_eff, GAS_PARAMS[g2]["d"])
+            pA=d_nm*10.0; lam=mean_free_path_nm(T,P_bar,0.5*(d_eff+GAS_PARAMS[g2]["d"]))
+            if pA<=dmin-SIEVE_BAND_A: return "Blocked"
+            if d_nm<=SOL_TH_NM: return "Solution"
+            if (pA>=dmin+DELTA_A) and (d_nm<0.5*lam): return "Knudsen"
+            if d_nm>=2.0 and rp>0.5: return "Capillary"
+            if pA<=dmin+SIEVE_BAND_A: return "Sieving"
+            return "Surface"
+
+        rp_mid = (np.clip(P_bar_t/float(st.session_state["P0bar_g"]),1e-6,0.9999)[len(t)//2] if time_mode
+                  else float(relP[len(relP)//2]))
+        L_m=L_nm*1e-9; M1=GAS_PARAMS[gas1]["M"]
+        dq_mid = float(dqdp1[len(dqdp1)//2]) if np.ndim(dqdp1)>0 and len(dqdp1)>0 else 0.0
+        d_eff_A = effective_diameter_A(gas1,T,alpha)
+        cand={
+            "Blocked":  PI_TINY,
+            "Sieving":  pintr_sieving_SI(d_nm,gas1,T,L_m,d_eff_A),
+            "Knudsen":  pintr_knudsen_SI(d_nm,T,M1,L_m),
+            "Surface":  pintr_surface_SI(d_nm,gas1,T,L_m,dq_mid),
+            "Capillary":pintr_capillary_SI(d_nm,rp_mid,L_m),
+            "Solution": pintr_solution_SI(gas1,T,L_m,dq_mid),
+        }
+        st.markdown(
+            f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid,alpha)}`  "
+            f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
+        )
+        st.caption("Band shows weight-based winners per x-position. α uses thermal λ scaling.")
 
 # =====================================================================
-# MODE 2 — ION MEMBRANE (multi-ion, steady + NEW: crack 열폭주 transient)
+# MODE 2 — ION MEMBRANE (steady + crack 열폭주 transient)
 # =====================================================================
 ION_DB = {
     "Na+":       {"z": +1, "D": 1.33e-9},
@@ -308,7 +530,6 @@ def donnan_potential_general(c_bulk, z_map, K_map, Cf, T):
 def ghk_flux(Pi, z, Cin, Cout, dV, T):
     a = -z*F*dV/(R*T)
     if abs(a) < 1e-6:
-        # 소전위 근사: lim a->0 (Cin - Cout*e^a)/(1 - e^a) ≈ Cin - Cout*(1+a) / (a - a^2/2) ≈ (Cin-Cout) - 0.5*a*(Cin+Cout)
         return Pi*((z*z)*(F**2)*dV/(R*T))*((Cin - Cout) - 0.5*a*(Cin + Cout))
     num = Cin - Cout*np.exp(a)
     den = 1.0 - np.exp(a)
@@ -336,7 +557,6 @@ def run_ion_membrane():
         if len(sel_cat)>5: st.warning("Cations >5 → 앞 5개만 사용합니다."); sel_cat = sel_cat[:5]
         if len(sel_an)>5:  st.warning("Anions >5 → 앞 5개만 사용합니다.");  sel_an  = sel_an[:5]
 
-        # Bulk concentrations
         st.subheader("Bulk concentrations (mol/m³)")
         st.caption("종마다 feed/permeate 농도를 슬라이더로 조정 (0~1000 mol/m³)")
         c_feed = {}; c_perm = {}
@@ -344,12 +564,11 @@ def run_ion_membrane():
             c_feed[sp] = nudged_slider(f"{sp} feed", 0.0, 1000.0, 1.0, 100.0, key=f"cf_{sp}", unit="mol/m³")
             c_perm[sp] = nudged_slider(f"{sp} permeate", 0.0, 1000.0, 1.0, 10.0,  key=f"cp_{sp}", unit="mol/m³")
 
-        # K & D 설정 (Auto 권장)
         st.subheader("K & D 설정")
         auto_kd = st.checkbox("Auto-compute K & D (권장)", value=True, key="autoKD_i")
 
         if auto_kd:
-            K_map = {sp: 1.0 for sp in (sel_cat + sel_an)}  # 화학적 분배
+            K_map = {sp: 1.0 for sp in (sel_cat + sel_an)}
             T_ref = T_REF_ION
             eta_ref = eta_water_PaS(T_ref)
             eta_now = eta_water_PaS(T)
@@ -365,7 +584,7 @@ def run_ion_membrane():
             D_map = {sp: log_slider(f"D {sp}", -11.0, -8.0, 0.1, np.log10(ION_DB[sp]['D']), key=f"D_{sp}", unit="m²/s")
                      for sp in (sel_cat+sel_an)}
 
-    # ----------------- Steady 계산 (기존 로직) -----------------
+    # ---- Steady 계산 ----
     L = Lnm*1e-9
     P_map_base = {sp: (D_map[sp]*eps/max(tau,1e-9))/max(L,1e-12) for sp in (sel_cat+sel_an)}
     z_map = {sp: int(ION_DB[sp]["z"]) for sp in (sel_cat+sel_an)}
@@ -409,7 +628,7 @@ def run_ion_membrane():
         ax.grid(True, axis='y')
         st.pyplot(fig, use_container_width=True); plt.close(fig)
 
-    # ---------------- NEW: Crack 유도 열폭주(Transient) ----------------
+    # ---- NEW: Crack 유도 열폭주(Transient) ----
     st.markdown("---")
     st.subheader("Crack-induced thermal runaway (Transient) — Optional")
     enable_runaway = st.checkbox("Enable crack/thermal runaway simulation", value=False, key="runaway_on")
@@ -433,50 +652,38 @@ def run_ion_membrane():
             k_g   = log_slider("Crack growth rate k_g", -4.0, 1.0, 0.1, -1.0, key="tr_kg",
                                unit="s⁻¹", help="df/dt = k_g·max(T-Tcrit,0)·(1-f)")
 
-        # 시뮬레이션 버퍼
         nstep = int(np.ceil(t_end/max(dt,1e-9)))+1
         tvec  = np.linspace(0.0, t_end, nstep)
         Tv    = np.zeros_like(tvec); Tv[0] = T
         iv    = np.zeros_like(tvec)
         fv    = np.zeros_like(tvec); fv[0] = f0
 
-        # 기준 점도/참조
         eta_ref = eta_water_PaS(T_REF_ION)
 
-        # 루프
-        P_base = P_map_base.copy()
+        L = Lnm*1e-9
         for k in range(1, nstep):
             T_old = Tv[k-1]
             f_old = fv[k-1]
 
-            # 점도/확산 업데이트 (T 의존)
             eta_now = eta_water_PaS(T_old)
             D_T = {sp: D_temp_correction(ION_DB[sp]["D"], T_REF_ION, T_old, eta_ref, eta_now)
                    for sp in (sel_cat+sel_an)}
-            # 균열 채널 — 병렬 혼합(면적가중)
-            # crack 영역의 P는 (1 + G_crack * f)배 강화
             P_crack = {sp: (D_T[sp]*eps/max(tau,1e-9))/max(L,1e-12) * (1.0 + 10.0**G_crk * f_old) for sp in (sel_cat+sel_an)}
             P_bulk  = {sp: (D_T[sp]*eps/max(tau,1e-9))/max(L,1e-12) for sp in (sel_cat+sel_an)}
             P_eff   = {sp: (1.0 - a_crk)*P_bulk[sp] + a_crk*P_crack[sp] for sp in (sel_cat+sel_an)}
 
-            # 전류 (현재 T 로 Donnan 농도 이미 계산됨; 온도 변화가 크면 Cm도 T 반영하려면 재계산 가능)
             _, i_now = compute_flux_and_current(P_eff, T_old)
             iv[k] = i_now
 
-            # 전력 밀도 (면적당) ~ i*dV  (부호 무시)
             Pj = abs(i_now * dV)  # W/m²
-
-            # 열수지: dT/dt = Pj/C_th - (T - T_amb)/τ_cool
             dTdt = Pj/max(C_th,1e-9) - (T_old - T_amb)/max(10.0**st.session_state["tr_tau"], 1e-6)
             Tv[k] = T_old + dt*dTdt
 
-            # crack 성장: df/dt = k_g·max(T-Tcrit,0)·(1-f)
             kg = 10.0**st.session_state["tr_kg"]
             drive = max(T_old - Tcrit, 0.0)
             dfdt = kg * drive * (1.0 - f_old)
             fv[k] = float(np.clip(f_old + dt*dfdt, 0.0, 1.0))
 
-        # Plot
         c1, c2 = st.columns(2)
         with c1:
             figT, axT = plt.subplots(figsize=(6,3))
@@ -493,18 +700,16 @@ def run_ion_membrane():
             axI.grid(True); axI.legend()
             st.pyplot(figI, use_container_width=True); plt.close(figI)
 
-        # Crack fraction
         figF, axF = plt.subplots(figsize=(12,2.4))
         axF.plot(tvec, fv, label="f_crack")
         axF.set_xlabel("t (s)"); axF.set_ylabel("f")
         axF.grid(True); axF.legend(loc="upper left")
         st.pyplot(figF, use_container_width=True); plt.close(figF)
 
-        # 상태 요약
         st.info(f"Final T = {Tv[-1]:.2f} K,  Final i = {iv[-1]:.3e} A/m²,  Final f_crack = {fv[-1]:.3f}")
 
 # =====================================================================
-# MODE 3 — DRUG IN VESSEL (1D ADR, transient)  — 기존 그대로
+# MODE 3 — DRUG IN VESSEL (1D ADR, transient)
 # =====================================================================
 DRUG_DB = {
     "Caffeine":        {"Db": 6.5e-10, "Pv": 2.0e-6, "kel": 1.0e-4},
@@ -520,14 +725,118 @@ DRUG_DB = {
 }
 
 def run_vascular_drug():
-    # (너의 기존 구현 그대로)
-    pass  # ← 네 파일의 기존 run_vascular_drug() 본문을 그대로 유지하세요.
+    st.header("Drug Transport in a Vessel (1D ADR, transient)")
+
+    with st.sidebar:
+        st.subheader("Geometry & Flow")
+        Rv_um = nudged_slider("Vessel radius", 2.0, 100.0, 1.0, 4.0, key="Rv_um_v", unit="μm")
+        L_mm  = nudged_slider("Segment length", 1.0, 200.0, 1.0, 20.0, key="Lv_mm_v", unit="mm")
+        U     = nudged_slider("Mean velocity U", 0.1e-3, 20e-3, 0.1e-3, 1.0e-3, key="U_v", unit="m/s",
+                              help="~1 mm/s in capillaries")
+
+        st.subheader("Drug & Mass Transfer")
+        drug = st.selectbox("Drug (defaults loaded)", list(DRUG_DB.keys()), index=0, key="drug_v")
+
+        st.subheader("Thermophysical (for Db auto)")
+        T_body = nudged_slider("Temperature", 293.15, 312.15, 0.5, 310.15, key="Tdrug_v", unit="K",
+                               help="Db 자동 보정에 사용 (기본 310K ≈ 37°C)")
+        medium = st.selectbox("Solvent", ["water-like","plasma-like"], index=1, key="med_v",
+                              help="점도 모델 선택; 근사값")
+
+        auto_Db = st.checkbox("Auto-compute D_b from T & viscosity", value=True, key="autoDb_v")
+        if auto_Db:
+            T_ref = 298.15
+            eta_ref = eta_water_PaS(T_ref)
+            if medium == "water-like":
+                eta_now = eta_water_PaS(T_body)
+            else:
+                eta_now = 1.7 * eta_water_PaS(T_body)  # plasma ~1.7×water(37°C) 근사
+            Db = D_temp_correction(DRUG_DB[drug]["Db"], T_ref, T_body, eta_ref, eta_now)
+            st.caption(f"D_b auto: {Db:.3e} m²/s  (from {DRUG_DB[drug]['Db']:.3e} @25°C, medium={medium})")
+        else:
+            Db = log_slider("D_b",  -12.0, -8.0, 0.1, np.log10(DRUG_DB[drug]["Db"]), key="Db_v",  unit="m²/s")
+
+        Pv   = log_slider("P_v",   -9.0,  -5.0, 0.1, np.log10(DRUG_DB[drug]["Pv"]), key="Pv_v",  unit="m/s")
+        kel  = log_slider("k_elim",-6.0,  -2.0, 0.1, np.log10(DRUG_DB[drug]["kel"]), key="kel_v", unit="s⁻¹")
+
+        st.subheader("Inlet profile")
+        C0   = nudged_slider("Reference conc. C₀", 0.0, 5.0, 0.01, 1.0, key="C0_v", unit="mol/m³")
+        profile = st.selectbox("Profile", ["Bolus (Gaussian)","Constant infusion"], index=0, key="pulse_v")
+        t_end = nudged_slider("Sim time", 0.1, 600.0, 0.1, 60.0, key="tend_v", unit="s")
+        dt    = nudged_slider("Δt", 1e-3, 0.5, 1e-3, 0.01, key="dt_v", unit="s")
+        Nx    = nudged_int("Grid Nx", 50, 600, 10, 200, key="Nx_v")
+
+    Rv = Rv_um*1e-6
+    L  = L_mm*1e-3
+    x  = np.linspace(0, L, Nx)
+    if len(x) < 2:
+        st.error("Nx too small. Increase Grid Nx."); st.stop()
+    dx = x[1]-x[0]
+    t  = np.arange(0.0, t_end+dt, dt)
+    if len(t) < 2:
+        st.error("Simulation time too short. Increase t_end or reduce Δt."); st.stop()
+
+    Pe_r = U*Rv/Db
+    Deff = Db*(1.0 + (Pe_r**2)/192.0)
+    k_leak = 2.0*Pv/max(Rv,1e-12)
+
+    if profile == "Bolus (Gaussian)":
+        t0 = 0.2*t_end
+        sig = 0.05*t_end if t_end>0 else 1.0
+        Cin_t = C0*np.exp(-((t-t0)**2)/(2*sig**2))
+    else:
+        Cin_t = C0*np.ones_like(t)
+
+    C = np.zeros((len(t), Nx), dtype=float)
+    C[0,:] = 0.0
+
+    lam_a = U*dt/dx
+    lam_d = Deff*dt/(dx*dx)
+    if lam_a>1.0: st.warning(f"Advection CFL>1 (UΔt/Δx={lam_a:.2f}). Reduce Δt or increase Nx.")
+    if lam_d>0.5: st.warning(f"Diffusion number>0.5 (D_effΔt/Δx²={lam_d:.2f}). Use smaller Δt.")
+
+    for n in range(1, len(t)):
+        Cn = C[n-1,:].copy()
+        Cnp = Cn.copy()
+        Cnp[0] = Cin_t[n]
+        adv = -lam_a*(Cn[1:] - Cn[:-1])
+        dif = lam_d*(np.roll(Cn,-1)[1:-1] - 2*Cn[1:-1] + Cn[0:-2])
+        react = -dt*(k_leak + kel)*Cn[1:-1]
+        Cnp[1:-1] = Cn[1:-1] + adv[:-1] + dif + react
+        Cnp[-1] = Cnp[-2]
+        C[n,:] = np.maximum(Cnp, 0.0)
+
+    Cout_t = C[:, -1]
+
+    col1, col2 = st.columns([1,2])
+    with col1:
+        st.subheader("Key numbers")
+        st.metric("Pe_r = U·R/D_b", f"{Pe_r:.2f}")
+        st.metric("D_eff", f"{Deff:.3e} m²/s")
+        st.metric("k_leak = 2P_v/R", f"{k_leak:.3e} s⁻¹")
+
+    with col2:
+        fig, ax = plt.subplots(figsize=(8,3))
+        vmin, vmax = float(np.min(C)), float(np.max(C))
+        if not np.isfinite(vmin): vmin = 0.0
+        if not np.isfinite(vmax) or abs(vmax-vmin) < 1e-15: vmax = vmin + 1e-12
+        im = ax.imshow(C.T, aspect='auto', origin='lower',
+                       extent=(t[0], t[-1], x[0]*1e3, x[-1]*1e3),
+                       vmin=vmin, vmax=vmax)
+        ax.set_xlabel("t (s)"); ax.set_ylabel("x (mm)")
+        cb = plt.colorbar(im, ax=ax); cb.set_label("C (mol/m³)")
+        st.pyplot(fig, use_container_width=True); plt.close(fig)
+
+        fig2, ax2 = plt.subplots(figsize=(8,3))
+        ax2.plot(t, Cout_t, label="Outlet")
+        ax2.set_xlabel("t (s)"); ax2.set_ylabel("C_out (mol/m³)")
+        ax2.grid(True); ax2.legend()
+        st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
 # =====================================================================
 # App shell — Mode selection
 # =====================================================================
 st.title("Unified Transport Simulators (SI)")
-
 mode_main = st.sidebar.radio("Select simulation",
                              ["Gas membrane", "Ion membrane", "Drug in vessel"],
                              index=0)
