@@ -154,35 +154,54 @@ GAS_PARAMS = {
     "C3H8":{"M":44.097e-3, "d":4.30, "Ea_s":1.05e4},
 }
 
-def intrinsic_permeances(gas, T, Pbar, d_nm, rp, L_nm, dqdp, alpha,
-                         apply_gates=True, small_pore_knudsen_factor=1e-4):
+def intrinsic_permeances(
+    gas, T, Pbar, d_nm, rp, L_nm, dqdp, alpha,
+    apply_gates=True, small_pore_knudsen_factor=1e-4
+):
     """
     라벨/밴드 공용: 동일한 규칙/감쇠를 적용한 내재 퍼미언스 dict 반환
-    - apply_gates=True: capillary 게이트, knudsen 감쇠 적용
-    - small_pore_knudsen_factor: 아주 작은 기공(d<=0.5 nm)에서 Knudsen 추가 감쇠 계수
+    + BLOCK 게이트: (i) 입체 차단, (ii) 확산 불가 조건에서 다른 항을 0으로
     """
-    L_m = max(float(L_nm), 1e-3)*1e-9
+    L_m = max(float(L_nm), 1e-3) * 1e-9
     M   = GAS_PARAMS[gas]["M"]
     d_eff_A = effective_diameter_A(gas, T, alpha)
 
     Pi = {
-        "Blocked":  PI_TINY,
-        "Sieving":  pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A),
-        "Knudsen":  pintr_knudsen_SI(d_nm, T, M, L_m),
-        "Surface":  pintr_surface_SI(d_nm, gas, T, L_m, dqdp),
-        "Capillary":pintr_capillary_SI(d_nm, rp, L_m),
-        "Solution": pintr_solution_SI(gas, T, L_m, dqdp),
+        "Blocked":   PI_TINY,
+        "Sieving":   pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A),
+        "Knudsen":   pintr_knudsen_SI(d_nm, T, M, L_m),
+        "Surface":   pintr_surface_SI(d_nm, gas, T, L_m, dqdp),
+        "Capillary": pintr_capillary_SI(d_nm, rp, L_m),
+        "Solution":  pintr_solution_SI(gas, T, L_m, dqdp),
     }
 
     if apply_gates:
-        # (A) Capillary 게이트: 규칙(classify_mech)과 동일 조건에서만 활성화
+        # (A) Capillary 게이트: 규칙과 동일
         if not (d_nm >= 2.0 and rp > 0.5):
             Pi["Capillary"] = 0.0
-        # (B) 기존 Knudsen 감쇠(큰 기공·높은 rp에서)
-        Pi = damp_knudsen_if_needed(Pi, d_nm, rp)
-        # (C) 아주 작은 기공에서 Knudsen 추가 감쇠 (치밀층 보정)
+
+        # (B) Knudsen 감쇠: 초소기공에서 추가 감쇠
         if d_nm <= 0.5:
             Pi["Knudsen"] *= small_pore_knudsen_factor
+
+        # (C) 기존 큰-기공/rp 영역 감쇠(사용 중이면)
+        Pi = damp_knudsen_if_needed(Pi, d_nm, rp)
+
+    # ---------------- BLOCK 게이트 (여기가 핵심 추가) ----------------
+    if st.session_state.get("block_gate_on", False):
+        # 1) 입체(steric) 차단: 기공이 유효지름보다 충분히 작거나 극소기공이면 차단
+        pA = d_nm * 10.0  # nm → Å
+        steric_block = (pA <= (d_eff_A - SIEVE_BAND_A)) or (d_nm <= 0.08)  # 0.08 nm ≈ 극소기공
+
+        # 2) 확산 불가: 흡착 경사 거의 0이고 r_p도 매우 낮으면 확산계열 차단
+        dqdp_cut = float(st.session_state.get("dqdp_cut_val", 1e-10))
+        diffusion_off = (abs(dqdp) < dqdp_cut) and (rp <= 0.05)
+
+        if steric_block or diffusion_off:
+            # 다른 메커니즘을 0으로 강제 → Blocked(=PI_TINY)만 남아 승자
+            for k in ("Sieving", "Knudsen", "Surface", "Capillary", "Solution"):
+                Pi[k] = 0.0
+    # -----------------------------------------------------------------
 
     return Pi
 
@@ -395,6 +414,24 @@ def run_gas_membrane():
         else:
             st.session_state["alpha_g"] = nudged_slider("Manual α", 0.0, 0.60, 0.01, float(st.session_state["alpha_g"]),
                                                         key="alpha_manual_g")
+
+                # ---------------------------------------------
+                # BLOCK 게이트 옵션 (Blocked를 확실히 보이게)
+                # ---------------------------------------------
+                st.markdown("---")
+                st.subheader("Blocking gate (advanced)")
+                # 엄격 차단 토글
+                st.session_state["block_gate_on"] = st.checkbox(
+                    "Enable strict BLOCK gate", value=True, key="block_gate_on"
+                )
+                # |dq/dp|가 이 컷오프보다 작고 r_p도 매우 낮으면 확산계열(Surface/Solution) 차단
+                st.session_state["dqdp_cut_val"] = log_slider(
+                    "dq/dp cutoff for diffusion",
+                    -14.0, -6.0, 0.5, -10.0,
+                    key="dqdp_cut_g",
+                    unit="(mol/kg)/Pa",
+                    help="이 값보다 |dq/dp|가 작고 rₚ≤0.05면 확산 계열을 0으로 잘라 Blocked 우세 유도"
+                )
 
         lamA = de_broglie_lambda_m(T, GAS_PARAMS[gas1]["M"]) * 1e10  # Å
         d_effA = effective_diameter_A(gas1, T, float(st.session_state["alpha_g"]))
