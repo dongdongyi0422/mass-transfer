@@ -189,30 +189,34 @@ def pintr_knudsen_SI(d_nm, T, M, L_m):
     Dk = (2.0/3.0)*r*np.sqrt((8.0*R*T)/(np.pi*M))
     return Dk/(L_m*R*T)
 
+# ---------------- 수정 내용 ----------------
+
 def pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A):
     dA_eff = d_eff_A
     pA = d_nm*10.0
     delta = dA_eff - pA
     if delta > 0:
-        return max(PI_SOFT_REF*np.exp(-(delta/DELTA_SOFT_A)**2)*np.exp(-E_SIEVE/(R*T)), PI_TINY)
+        return max(1e-6*np.exp(-(delta/DELTA_SOFT_A)**2)*np.exp(-E_SIEVE/(R*T)), PI_TINY)
     x = max(1.0 - (dA_eff/pA)**2, 0.0); f = x**2
-    return max(3e-4*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
+    return max(1e-6*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
 
 def pintr_surface_SI(d_nm, gas, T, L_m, dqdp):
     Ds = D0_SURF * np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
     mult = st.session_state.get("surf_mult", 1.0)
-    return max(mult * (Ds/L_m) * (dqdp*500.0), 0.0)
-
-def pintr_capillary_SI(d_nm, rp, L_m):
-    r_m = max(d_nm*1e-9/2.0, 1e-12)
-    thresh = np.exp(-120.0/(((d_nm/2.0)*rp*300.0)+1e-12))
-    if rp <= thresh: return 0.0
-    return 1e-7*np.sqrt(r_m)/L_m
+    return max(mult * (Ds/L_m) * (dqdp * 2e6), 0.0)   # ★ 기존 500 → 2e6
 
 def pintr_solution_SI(gas, T, L_m, dqdp):
     Dsol = D0_SOL*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
     mult = st.session_state.get("sol_mult", 1.0)
-    return max(mult * (Dsol/L_m) * (dqdp*500.0), 0.0)
+    return max(mult * (Dsol/L_m) * (dqdp * 2e6), 0.0)  # ★ 기존 500 → 2e6
+
+def pintr_capillary_SI(d_nm, rp, L_m):
+    # ★ 조건 완화: 2.0→1.5, 0.5→0.4
+    if not (d_nm >= 1.5 and rp > 0.4):
+        return 0.0
+    r_m = max(d_nm*1e-9/2.0, 1e-12)
+    return 1e-6*np.sqrt(r_m)/L_m  # 1e-7 → 1e-6 로 약간 강화
+
 
 def intrinsic_permeances(
     gas, T, Pbar, d_nm, rp, L_nm, dqdp, alpha,
