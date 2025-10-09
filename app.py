@@ -154,6 +154,38 @@ GAS_PARAMS = {
     "C3H8":{"M":44.097e-3, "d":4.30, "Ea_s":1.05e4},
 }
 
+def intrinsic_permeances(gas, T, Pbar, d_nm, rp, L_nm, dqdp, alpha,
+                         apply_gates=True, small_pore_knudsen_factor=1e-4):
+    """
+    라벨/밴드 공용: 동일한 규칙/감쇠를 적용한 내재 퍼미언스 dict 반환
+    - apply_gates=True: capillary 게이트, knudsen 감쇠 적용
+    - small_pore_knudsen_factor: 아주 작은 기공(d<=0.5 nm)에서 Knudsen 추가 감쇠 계수
+    """
+    L_m = max(float(L_nm), 1e-3)*1e-9
+    M   = GAS_PARAMS[gas]["M"]
+    d_eff_A = effective_diameter_A(gas, T, alpha)
+
+    Pi = {
+        "Blocked":  PI_TINY,
+        "Sieving":  pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A),
+        "Knudsen":  pintr_knudsen_SI(d_nm, T, M, L_m),
+        "Surface":  pintr_surface_SI(d_nm, gas, T, L_m, dqdp),
+        "Capillary":pintr_capillary_SI(d_nm, rp, L_m),
+        "Solution": pintr_solution_SI(gas, T, L_m, dqdp),
+    }
+
+    if apply_gates:
+        # (A) Capillary 게이트: 규칙(classify_mech)과 동일 조건에서만 활성화
+        if not (d_nm >= 2.0 and rp > 0.5):
+            Pi["Capillary"] = 0.0
+        # (B) 기존 Knudsen 감쇠(큰 기공·높은 rp에서)
+        Pi = damp_knudsen_if_needed(Pi, d_nm, rp)
+        # (C) 아주 작은 기공에서 Knudsen 추가 감쇠 (치밀층 보정)
+        if d_nm <= 0.5:
+            Pi["Knudsen"] *= small_pore_knudsen_factor
+
+    return Pi
+
 MECH_ORDER = ["Blocked","Sieving","Knudsen","Surface","Capillary","Solution"]
 MECH_COLOR = {
     "Blocked":"#bdbdbd","Sieving":"#1f78b4","Knudsen":"#33a02c",
@@ -242,45 +274,31 @@ def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
     return Pi_intr
 
 def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha):
-    _,dv = dsl_loading_and_slope_b(g1,T,P_bar,relP,q11,q12,b11,b12)
-    L_m=max(float(L_nm),1e-3)*1e-9; M1=GAS_PARAMS[g1]["M"]
-    d_eff_A = effective_diameter_A(g1,T,alpha)
-    names=[]
-    for i,rp in enumerate(relP):
-        dq=float(dv[i])
-        Pi_intr={
-            "Blocked": PI_TINY,
-            "Sieving": pintr_sieving_SI(d_nm,g1,T,L_m,d_eff_A),
-            "Knudsen": pintr_knudsen_SI(d_nm,T,M1,L_m),
-            "Surface": pintr_surface_SI(d_nm,g1,T,L_m,dq),
-            "Capillary":pintr_capillary_SI(d_nm,float(rp),L_m),
-            "Solution": pintr_solution_SI(g1,T,L_m,dq),
-        }
-        Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,float(rp))
-        w=weights_from_intrinsic(Pi_intr)
-        names.append(max(w,key=w.get))
-    rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
+    _, dv = dsl_loading_and_slope_b(g1, T, P_bar, relP, q11, q12, b11, b12)
+    names = []
+    for i, rp in enumerate(relP):
+        Pi_intr = intrinsic_permeances(
+            gas=g1, T=T, Pbar=P_bar, d_nm=d_nm, rp=float(rp),
+            L_nm=L_nm, dqdp=float(dv[i]), alpha=alpha,
+            apply_gates=True, small_pore_knudsen_factor=1e-4
+        )
+        winner = max(Pi_intr, key=Pi_intr.get)
+        names.append(winner)
+    rgba = np.array([to_rgba(MECH_COLOR[n]) for n in names])[None, :, :]
     return rgba, names
 
 def mechanism_band_rgba_time(g1,g2,T,P_bar,d_nm,L_nm,t_vec,P_bar_t,dqdp1,P0bar,alpha):
-    L_m=max(float(L_nm),1e-3)*1e-9; M1=GAS_PARAMS[g1]["M"]
-    rp_t=np.clip(P_bar_t/float(P0bar),1e-6,0.9999)
-    d_eff_A = effective_diameter_A(g1,T,alpha)
-    names=[]
+    rp_t = np.clip(P_bar_t/float(P0bar), 1e-6, 0.9999)
+    names = []
     for i in range(len(t_vec)):
-        rp=float(rp_t[i]); dq=float(dqdp1[i])
-        Pi_intr={
-            "Blocked": PI_TINY,
-            "Sieving": pintr_sieving_SI(d_nm,g1,T,L_m,d_eff_A),
-            "Knudsen": pintr_knudsen_SI(d_nm,T,M1,L_m),
-            "Surface": pintr_surface_SI(d_nm,g1,T,L_m,dq),
-            "Capillary":pintr_capillary_SI(d_nm,rp,L_m),
-            "Solution": pintr_solution_SI(g1,T,L_m,dq),
-        }
-        Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,rp)
-        w=weights_from_intrinsic(Pi_intr)
-        names.append(max(w,key=w.get))
-    rgba=np.array([to_rgba(MECH_COLOR[n]) for n in names])[None,:,:]
+        Pi_intr = intrinsic_permeances(
+            gas=g1, T=T, Pbar=P_bar, d_nm=d_nm, rp=float(rp_t[i]),
+            L_nm=L_nm, dqdp=float(dqdp1[i]), alpha=alpha,
+            apply_gates=True, small_pore_knudsen_factor=1e-4
+        )
+        winner = max(Pi_intr, key=Pi_intr.get)
+        names.append(winner)
+    rgba = np.array([to_rgba(MECH_COLOR[n]) for n in names])[None, :, :]
     return rgba, names
 
 def pressure_schedule_series(t,P0_bar,ramp,tau):
@@ -463,35 +481,25 @@ def run_gas_membrane():
         st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
     with colA:
-        st.subheader("Mechanism (rule) vs intrinsic (Gas1) — reference")
-        def classify_mech(d_nm,g1,g2,T,P_bar,rp,alpha):
-            d_eff = effective_diameter_A(g1,T,alpha)
-            dmin = min(d_eff, GAS_PARAMS[g2]["d"])
-            pA=d_nm*10.0; lam=mean_free_path_nm(T,P_bar,0.5*(d_eff+GAS_PARAMS[g2]["d"]))
-            if pA<=dmin-SIEVE_BAND_A: return "Blocked"
-            if d_nm<=SOL_TH_NM: return "Solution"
-            if (pA>=dmin+DELTA_A) and (d_nm<0.5*lam): return "Knudsen"
-            if d_nm>=2.0 and rp>0.5: return "Capillary"
-            if pA<=dmin+SIEVE_BAND_A: return "Sieving"
-            return "Surface"
+        st.subheader("Mechanism (synced with band)")
 
+        # 중간 지점(rp_mid) 선택 (Time 모드면 시간 중간, P/P0 모드면 배열 중간)
         rp_mid = (np.clip(P_bar_t/float(st.session_state["P0bar_g"]),1e-6,0.9999)[len(t)//2] if time_mode
                   else float(relP[len(relP)//2]))
-        L_m=L_nm*1e-9; M1=GAS_PARAMS[gas1]["M"]
         dq_mid = float(dqdp1[len(dqdp1)//2]) if np.ndim(dqdp1)>0 and len(dqdp1)>0 else 0.0
-        d_eff_A = effective_diameter_A(gas1,T,alpha)
-        cand={
-            "Blocked":  PI_TINY,
-            "Sieving":  pintr_sieving_SI(d_nm,gas1,T,L_m,d_eff_A),
-            "Knudsen":  pintr_knudsen_SI(d_nm,T,M1,L_m),
-            "Surface":  pintr_surface_SI(d_nm,gas1,T,L_m,dq_mid),
-            "Capillary":pintr_capillary_SI(d_nm,rp_mid,L_m),
-            "Solution": pintr_solution_SI(gas1,T,L_m,dq_mid),
-        }
-        st.markdown(
-            f"**Mechanism (rule):** `{classify_mech(d_nm, gas1, gas2, T, Pbar, rp_mid, alpha)}`  "
-            f"|  **Best intrinsic:** `{max(cand, key=cand.get)}`"
+    
+        cand = intrinsic_permeances(
+            gas=gas1, T=T, Pbar=Pbar, d_nm=d_nm, rp=rp_mid,
+            L_nm=L_nm, dqdp=dq_mid, alpha=alpha,
+            apply_gates=True, small_pore_knudsen_factor=1e-4
         )
+        winner = max(cand, key=cand.get)
+    
+        st.markdown(
+            f"**Mechanism (synced):** `{winner}`  |  **Best intrinsic:** `{winner}`"
+        )
+        st.caption("라벨/밴드는 동일한 내재식, 동일 게이트/감쇠로 계산됩니다.")
+
 
 
 # =====================================================================
