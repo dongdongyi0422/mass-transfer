@@ -491,6 +491,7 @@ def run_gas_membrane():
         st.markdown(
             f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid,alpha)}`  "
             f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
+            cand = damp_knudsen_if_needed(cand, d_nm, rp_mid)
         )
         st.caption("Band shows weight-based winners per x-position. α uses thermal λ scaling.")
 
