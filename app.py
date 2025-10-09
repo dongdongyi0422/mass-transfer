@@ -415,35 +415,24 @@ def run_gas_membrane():
                                       key="zoom_half_g", unit="–",
                                       help="밴드를 [rₚ-Δ, rₚ+Δ] 범위만 표시")
 
+        # ---------- (optional) tuning & block gates ----------
         st.markdown("---")
-        st.subheader("Quantum size correction α (De Broglie)")
-        auto_alpha = st.checkbox("Auto-set α from temperature", value=True,
-                                 help="α(T)=a₀·√(T₀/T), 좁은 기공에서 약간 강화", key="autoalpha_g")
-        a0 = nudged_slider("Auto α scale (a₀)", 0.00, 0.40, 0.01, 0.05, key="a0_g")
+        st.subheader("Mechanism tuning (advanced)")
+        st.session_state["sol_mult"]  = log_slider("Solution multiplier", -2.0, 3.0, 0.1, 0.0,
+                                           key="sol_mult_g",  unit="×")
+        st.session_state["surf_mult"] = log_slider("Surface multiplier",  -2.0, 3.0, 0.1, 0.0,
+                                           key="surf_mult_g", unit="×")
 
-        if "alpha_g" not in st.session_state:
-            st.session_state["alpha_g"] = 0.05
+        st.markdown("---")
+        st.subheader("Blocking gate (advanced)")
+        # ✅ 수정: st.session_state에 대입 제거
+        st.checkbox("Enable strict BLOCK gate", value=True, key="block_gate_on")
 
-        if auto_alpha:
-            alpha_calc = alpha_auto_by_temperature(T, a0=a0, T_ref=300.0, a_min=0.0, a_max=0.60, d_nm=d_nm)
-            st.session_state["alpha_g"] = alpha_calc
-            st.number_input("α (auto)", value=float(alpha_calc), format="%.4f",
-                            disabled=True, key="alpha_auto_display_g")
-        else:
-            st.session_state["alpha_g"] = nudged_slider("Manual α", 0.0, 0.60, 0.01,
-                                                        float(st.session_state["alpha_g"]),
-                                                        key="alpha_manual_g")
-
-        # De Broglie λ, d_eff 표시
-        lamA   = de_broglie_lambda_m(T, GAS_PARAMS[gas1]["M"]) * 1e10  # Å
-        d_effA = effective_diameter_A(gas1, T, float(st.session_state["alpha_g"]))
-        c1, c2 = st.columns(2)
-        with c1:
-            st.number_input("De Broglie λ (Gas1, Å)", value=float(lamA), format="%.3f",
-                            disabled=True, key="lam_display")
-        with c2:
-            st.number_input("Effective diameter d_eff (Å)", value=float(d_effA), format="%.3f",
-                            disabled=True, key="deff_display")
+        st.session_state["dqdp_cut_val"] = log_slider(
+            "dq/dp cutoff for diffusion", -14.0, -6.0, 0.5, -10.0,
+            key="dqdp_cut_g", unit="(mol/kg)/Pa",
+            help="|dq/dp|<cutoff 이고 rₚ≤0.05면 Surface/Solution을 0으로 잘라 Blocked 우세 유도"
+        )
 
         # ---------- (optional) tuning & block gates ----------
         st.markdown("---")
