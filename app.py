@@ -122,9 +122,9 @@ PI_TINY  = 1e-14
 
 # porous transport scales
 RHO_EFF   = 500.0
-D0_SURF   = 1e-9
-D0_SOL    = 1e-10
-E_D_SOL   = 1.8e4
+D0_SURF   = 3e-10
+D0_SOL    = 1e-9
+E_D_SOL   = 1.4e4
 K_CAP     = 1e-7
 E_SIEVE   = 6.0e3
 SOL_TH_NM = 0.30
@@ -227,7 +227,7 @@ def pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A):
     return max(3e-4*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
 
 def pintr_surface_SI(d_nm, gas, T, L_m, dqdp):
-    Ds = 1e-9*np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
+    Ds = D0_SURF*np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
     return max((Ds/L_m)*(dqdp*500.0),0.0)
 
 def pintr_capillary_SI(d_nm, rp, L_m):
@@ -237,7 +237,7 @@ def pintr_capillary_SI(d_nm, rp, L_m):
     return 1e-7*np.sqrt(r_m)/L_m
 
 def pintr_solution_SI(gas, T, L_m, dqdp):
-    Dsol = 1e-10*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
+    Dsol = D0_SOL*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
     return max((Dsol/L_m)*(dqdp*500.0),0.0)
 
 def _series_parallel(Pp,Pd,eps=1e-30):
@@ -318,25 +318,23 @@ def ldf_evolve_q(t,P_bar_t,qeq_fn,kLDF,q0=0.0):
     return q_dyn, dqdp
 
 def permeance_series_SI(d_nm, gas, other, T, P_bar, relP, L_nm, q_mmolg, dqdp, q_other, alpha):
-    L_m=max(L_nm,1e-3)*1e-9; M=GAS_PARAMS[gas]["M"]
-    d_eff_A = effective_diameter_A(gas,T,alpha)
-    Pi=np.zeros_like(relP,float)
-    for i,rp in enumerate(relP):
-        Pi_intr={
-            "Blocked": PI_TINY,
-            "Sieving": pintr_sieving_SI(d_nm,gas,T,L_m,d_eff_A),
-            "Knudsen": pintr_knudsen_SI(d_nm,T,M,L_m),
-            "Surface": pintr_surface_SI(d_nm,gas,T,L_m,dqdp[i]),
-            "Capillary":pintr_capillary_SI(d_nm,rp,L_m),
-            "Solution": pintr_solution_SI(gas,T,L_m,dqdp[i]),
-        }
-        Pi_intr=damp_knudsen_if_needed(Pi_intr,d_nm,rp)
-        w=weights_from_intrinsic(Pi_intr)
-        Pi_pore = w["Sieving"]*Pi_intr["Sieving"] + w["Knudsen"]*Pi_intr["Knudsen"] + w["Capillary"]*Pi_intr["Capillary"]
-        Pi_diff = w["Surface"]*Pi_intr["Surface"] + w["Solution"]*Pi_intr["Solution"]
-        Pi0=_series_parallel(Pi_pore,Pi_diff)
+    Pi = np.zeros_like(relP, float)
+    for i, rp in enumerate(relP):
+        Pi_intr = intrinsic_permeances(
+            gas=gas, T=T, Pbar=P_bar, d_nm=d_nm, rp=float(rp),
+            L_nm=L_nm, dqdp=float(dqdp[i]), alpha=alpha,
+            apply_gates=True, small_pore_knudsen_factor=1e-4
+        )
+        # 밴드와 동일한 softmax 가중 + 직렬/병렬 결합
+        w = weights_from_intrinsic(Pi_intr)
+        Pi_pore = (w["Sieving"]*Pi_intr["Sieving"] +
+                   w["Knudsen"]*Pi_intr["Knudsen"] +
+                   w["Capillary"]*Pi_intr["Capillary"])
+        Pi_diff = (w["Surface"]*Pi_intr["Surface"] +
+                   w["Solution"]*Pi_intr["Solution"])
+        Pi0 = _series_parallel(Pi_pore, Pi_diff)
         theta = (q_mmolg[i]/(q_mmolg[i]+q_other[i])) if (q_mmolg[i]+q_other[i])>0 else 0.0
-        Pi[i]=Pi0*theta
+        Pi[i] = Pi0 * theta
     return Pi
 
 def run_gas_membrane():
@@ -844,7 +842,7 @@ def run_vascular_drug():
 # =====================================================================
 # App shell — Mode selection
 # =====================================================================
-st.title("Unified Transport Simulators (SI)")
+st.title("Unified Transport Simulators")
 mode_main = st.sidebar.radio("Select simulation",
                              ["Gas membrane", "Ion membrane", "Drug in vessel"],
                              index=0)
