@@ -489,11 +489,10 @@ def run_gas_membrane():
             "Solution": pintr_solution_SI(gas1,T,L_m,dq_mid),
         }
         st.markdown(
-            f"**Mechanism (rule):** `{classify_mech(d_nm,gas1,gas2,T,Pbar,rp_mid,alpha)}`  "
-            f"|  **Best intrinsic:** `{max(cand,key=cand.get)}`"
-            cand = damp_knudsen_if_needed(cand, d_nm, rp_mid)
+            f"**Mechanism (rule):** `{classify_mech(d_nm, gas1, gas2, T, Pbar, rp_mid, alpha)}`  "
+            f"|  **Best intrinsic:** `{max(cand, key=cand.get)}`"
         )
-        st.caption("Band shows weight-based winners per x-position. α uses thermal λ scaling.")
+
 
 # =====================================================================
 # MODE 2 — ION MEMBRANE (steady + crack 열폭주 transient)
