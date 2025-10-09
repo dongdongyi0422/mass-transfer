@@ -122,9 +122,9 @@ PI_TINY  = 1e-14
 
 # porous transport scales
 RHO_EFF   = 500.0
-D0_SURF   = 3e-10
-D0_SOL    = 1e-9
-E_D_SOL   = 1.4e4
+D0_SURF   = 1e-10
+D0_SOL    = 3e-9
+E_D_SOL   = 1.2e4
 K_CAP     = 1e-7
 E_SIEVE   = 6.0e3
 SOL_TH_NM = 0.30
@@ -227,8 +227,9 @@ def pintr_sieving_SI(d_nm, gas, T, L_m, d_eff_A):
     return max(3e-4*f*np.exp(-E_SIEVE/(R*T)), PI_TINY)
 
 def pintr_surface_SI(d_nm, gas, T, L_m, dqdp):
-    Ds = D0_SURF*np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
-    return max((Ds/L_m)*(dqdp*500.0),0.0)
+    Ds = D0_SURF * np.exp(-GAS_PARAMS[gas]["Ea_s"]/(R*T))
+    mult = st.session_state.get("surf_mult", 1.0)
+    return max(mult * (Ds/L_m) * (dqdp*500.0), 0.0)
 
 def pintr_capillary_SI(d_nm, rp, L_m):
     r_m = max(d_nm*1e-9/2.0, 1e-12)
