@@ -78,6 +78,10 @@ def nudged_int(label, vmin, vmax, vstep, vinit, key, help=None):
     return int(st.session_state[key])
 
 def log_slider(label, exp_min, exp_max, exp_step, exp_init, key, unit="", help=None):
+    """
+    반환: 10^x (실값). 세션에는 지수 x를 저장.
+    → 이 반환값을 '그대로' 사용하고, 추가로 10** 하지 마세요!
+    """
     if key not in st.session_state:
         st.session_state[key] = float(exp_init)
     if f"{key}__who" not in st.session_state:
@@ -139,7 +143,7 @@ PI_SOFT_REF  = 1e-6
 WEIGHT_MODE   = "softmax"
 SOFTMAX_GAMMA = 0.8
 DAMP_KNUDSEN  = True
-DAMP_FACTOR   = 1e-3
+DAMP_FACTOR   = 1e-3  # ← 상수 통일(아래 함수에서도 이 값 사용)
 
 GAS_PARAMS = {
     "H2":  {"M":2.016e-3,  "d":2.89, "Ea_s":8.0e3},
@@ -176,7 +180,7 @@ def intrinsic_permeances(
     }
 
     if apply_gates:
-        # (A) Capillary 게이트: 규칙과 동일
+        # (A) Capillary 게이트
         if not (d_nm >= 2.0 and rp > 0.5):
             Pi["Capillary"] = 0.0
 
@@ -187,21 +191,19 @@ def intrinsic_permeances(
         # (C) 기존 큰-기공/rp 영역 감쇠(사용 중이면)
         Pi = damp_knudsen_if_needed(Pi, d_nm, rp)
 
-    # ---------------- BLOCK 게이트 (여기가 핵심 추가) ----------------
+    # ---------------- BLOCK 게이트 ----------------
     if st.session_state.get("block_gate_on", False):
-        # 1) 입체(steric) 차단: 기공이 유효지름보다 충분히 작거나 극소기공이면 차단
+        # 1) 입체 차단
         pA = d_nm * 10.0  # nm → Å
-        steric_block = (pA <= (d_eff_A - SIEVE_BAND_A)) or (d_nm <= 0.08)  # 0.08 nm ≈ 극소기공
-
-        # 2) 확산 불가: 흡착 경사 거의 0이고 r_p도 매우 낮으면 확산계열 차단
+        steric_block = (pA <= (d_eff_A - SIEVE_BAND_A)) or (d_nm <= 0.08)  # 0.08 nm ~ 극소기공
+        # 2) 확산 불가
         dqdp_cut = float(st.session_state.get("dqdp_cut_val", 1e-10))
         diffusion_off = (abs(dqdp) < dqdp_cut) and (rp <= 0.05)
 
         if steric_block or diffusion_off:
-            # 다른 메커니즘을 0으로 강제 → Blocked(=PI_TINY)만 남아 승자
             for k in ("Sieving", "Knudsen", "Surface", "Capillary", "Solution"):
                 Pi[k] = 0.0
-    # -----------------------------------------------------------------
+    # ------------------------------------------------
 
     return Pi
 
@@ -257,8 +259,10 @@ def pintr_capillary_SI(d_nm, rp, L_m):
     return 1e-7*np.sqrt(r_m)/L_m
 
 def pintr_solution_SI(gas, T, L_m, dqdp):
+    # ← 수정: Solution multiplier 적용
     Dsol = D0_SOL*np.exp(-1.8e4/(R*T))/np.sqrt(GAS_PARAMS[gas]["M"]/1e-3)
-    return max((Dsol/L_m)*(dqdp*500.0),0.0)
+    mult = st.session_state.get("sol_mult", 1.0)
+    return max(mult * (Dsol/L_m) * (dqdp*500.0), 0.0)
 
 def _series_parallel(Pp,Pd,eps=1e-30):
     if not np.isfinite(Pp): Pp=0.0
@@ -289,8 +293,9 @@ def weights_from_intrinsic(Pi_intr, gamma=0.8):
     return {k:float(w[i]) for i,k in enumerate(keys)}
 
 def damp_knudsen_if_needed(Pi_intr, d_nm, rp):
+    # ← 수정: 상수 DAMP_FACTOR 사용
     if WEIGHT_MODE=="softmax" and DAMP_KNUDSEN and (d_nm<=0.5):
-        Pi_intr["Knudsen"]*=1e-4
+        Pi_intr["Knudsen"]*=DAMP_FACTOR
     return Pi_intr
 
 def mechanism_band_rgba(g1,g2,T,P_bar,d_nm,relP,L_nm,q11,q12,b11,b12,alpha):
@@ -512,7 +517,7 @@ def run_gas_membrane():
     colA, colB = st.columns([1, 2])
 
     with colB:
-        # Mechanism band (uses the same intrinsic logic)
+        # Mechanism band
         figBand, axBand = plt.subplots(figsize=(9, 0.7))
         if time_mode:
             rgba, _ = mechanism_band_rgba_time(gas1, gas2, T, Pbar, d_nm, L_nm, t, P_bar_t, dqdp1,
@@ -555,17 +560,12 @@ def run_gas_membrane():
 
     with colA:
         st.subheader("Mechanism (synced with band)")
-        # 라벨 평가 r_p 선택
         if time_mode:
             rp_mid = float(np.clip(P_bar_t/float(st.session_state["P0bar_g"]), 1e-6, 0.9999)[len(t)//2])
             dq_mid = float(dqdp1[len(dqdp1)//2]) if len(dqdp1)>0 else 0.0
         else:
-            if rp_focus is None:
-                rp_mid = float(relP[len(relP)//2])
-            else:
-                rp_mid = float(rp_focus)
-            # dq/dp는 rp_mid에 가장 가까운 인덱스를 사용
-            idx = int(np.argmin(np.abs(relP - rp_mid)))
+            rp_mid = float(st.session_state.get("rp_focus_g", np.median(X_vals)))
+            idx = int(np.argmin(np.abs(X_vals - rp_mid)))
             dq_mid = float(dqdp1[idx]) if len(dqdp1)>0 else 0.0
 
         cand = intrinsic_permeances(
@@ -574,7 +574,6 @@ def run_gas_membrane():
             apply_gates=True, small_pore_knudsen_factor=1e-4
         )
         winner = max(cand, key=cand.get)
-
         st.markdown(f"**Mechanism (synced):** `{winner}`  |  **Best intrinsic:** `{winner}`")
         st.caption("라벨/밴드는 동일한 내재식, 동일 게이트/감쇠로 계산됩니다.")
 
@@ -723,18 +722,14 @@ def run_ion_membrane():
             t_end = nudged_slider("Sim time", 0.05, 200.0, 0.05, 20.0, key="tr_tend", unit="s")
             dt    = nudged_slider("Δt", 1e-3, 0.5, 1e-3, 0.02, key="tr_dt", unit="s")
             T_amb = nudged_slider("Ambient T", 273.15, 330.0, 0.5, 298.15, key="tr_Tamb", unit="K")
-            C_th  = log_slider("Thermal capacity C_th", -1.0, 4.0, 0.1, 1.0, key="tr_Cth", unit="J m⁻² K⁻¹",
-                               help="막 단면 기준 열용량(면적당)")
-            tau_c = log_slider("Cooling time τ_cool", -1.0, 4.0, 0.1, 1.3, key="tr_tau", unit="s",
-                               help="대류/전도 냉각 등 효과를 등가 시정수로")
+            C_th  = log_slider("Thermal capacity C_th", -1.0, 4.0, 0.1, 1.0, key="tr_Cth", unit="J m⁻² K⁻¹")
+            tau_c = log_slider("Cooling time τ_cool", -1.0, 4.0, 0.1, 1.3, key="tr_tau", unit="s")
         with colR:
             a_crk = nudged_slider("Crack area fraction a_crack", 0.0, 0.5, 0.01, 0.05, key="tr_acrack")
-            G_crk = log_slider("Crack conductance gain G_crack", 0.0, 3.0, 0.05, 2.0, key="tr_Gcrack",
-                               unit="×", help="crack 쪽 투과/전도 증폭 계수(10^x)")
+            G_crk = log_slider("Crack conductance gain G_crack", 0.0, 3.0, 0.05, 2.0, key="tr_Gcrack", unit="×")
             f0    = nudged_slider("Initial crack growth f0", 0.0, 1.0, 0.01, 0.10, key="tr_f0")
             Tcrit = nudged_slider("Runaway threshold T_crit", 290.0, 360.0, 0.5, 320.0, key="tr_Tcrit", unit="K")
-            k_g   = log_slider("Crack growth rate k_g", -4.0, 1.0, 0.1, -1.0, key="tr_kg",
-                               unit="s⁻¹", help="df/dt = k_g·max(T-Tcrit,0)·(1-f)")
+            k_g   = log_slider("Crack growth rate k_g", -4.0, 1.0, 0.1, -1.0, key="tr_kg", unit="s⁻¹")
 
         nstep = int(np.ceil(t_end/max(dt,1e-9)))+1
         tvec  = np.linspace(0.0, t_end, nstep)
@@ -752,21 +747,22 @@ def run_ion_membrane():
             eta_now = eta_water_PaS(T_old)
             D_T = {sp: D_temp_correction(ION_DB[sp]["D"], T_REF_ION, T_old, eta_ref, eta_now)
                    for sp in (sel_cat+sel_an)}
-            P_crack = {sp: (D_T[sp]*eps/max(tau,1e-9))/max(L,1e-12) * (1.0 + 10.0**G_crk * f_old) for sp in (sel_cat+sel_an)}
+            P_crack = {sp: (D_T[sp]*eps/max(tau,1e-9))/max(L,1e-12) * (1.0 + G_crk * f_old) for sp in (sel_cat+sel_an)}
             P_bulk  = {sp: (D_T[sp]*eps/max(tau,1e-9))/max(L,1e-12) for sp in (sel_cat+sel_an)}
             P_eff   = {sp: (1.0 - a_crk)*P_bulk[sp] + a_crk*P_crack[sp] for sp in (sel_cat+sel_an)}
 
             _, i_now = compute_flux_and_current(P_eff, T_old)
             iv[k] = i_now
 
-            Pj = abs(i_now * dV)  # W/m²
-            dTdt = Pj/max(C_th,1e-9) - (T_old - T_amb)/max(10.0**st.session_state["tr_tau"], 1e-6)
-            Tv[k] = T_old + dt*dTdt
+            # 전력(발열/흡열 방향성 유지; 필요시 clip으로 양의 값만 반영 가능)
+            Pj = i_now * dV
+            dTdt = Pj/max(C_th,1e-9) - (T_old - T_amb)/max(tau_c, 1e-6)
 
-            kg = 10.0**st.session_state["tr_kg"]
+            kg = k_g  # log_slider 반환값은 이미 10^x 적용된 실값 → 그대로 사용
             drive = max(T_old - Tcrit, 0.0)
             dfdt = kg * drive * (1.0 - f_old)
             fv[k] = float(np.clip(f_old + dt*dfdt, 0.0, 1.0))
+            Tv[k] = T_old + dt*dTdt
 
         c1, c2 = st.columns(2)
         with c1:
