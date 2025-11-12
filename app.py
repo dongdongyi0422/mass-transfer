@@ -139,7 +139,7 @@ def np_flux_constfield(D_eff, z, Cin_m, Cout_m, dphi_mem, L, T, v_s=0.0):
     return term_d + term_e + term_c
 
 def run_ion_membrane():
-    st.header("Ion-Exchange / NF Membrane — NP + Donnan (GHK 제거)")
+    st.header("Ion-Exchange / NF Membrane ")
 
     with st.sidebar:
         st.subheader("Membrane & Operation")
