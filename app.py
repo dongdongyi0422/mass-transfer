@@ -1,6 +1,6 @@
 # app.py — Unified Transport Simulators (Gas / Ion / Vascular)
-# - Ion membrane: ONLY Nernst–Planck + Donnan (GHK 제거)
-# - Gas membrane: 간결/안정 버전(메커니즘 밴드, 퍼미언스/선택도)
+# - Ion membrane
+# - Gas membrane
 # - Drug in vessel: 1D ADR transient
 
 import numpy as np
