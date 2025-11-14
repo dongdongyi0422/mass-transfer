@@ -598,7 +598,7 @@ def run_ion_membrane():
         tau = nudged_slider("Tortuosity τ", 1.0, 5.0, 0.1, 2.0, key="tau_i", unit="–")
         Cf  = nudged_slider("Fixed charge C_f", -3000.0, 3000.0, 10.0, -500.0, key="Cf_i")
         dV  = nudged_slider("Membrane potential dV", -0.2, 0.2, 0.005, 0.0, key="dV_i")
-        v_s = nudged_slider("Solvent velocity v", -1e-6, 1e-6, 1e-7, 0.0, key="vsolv_i",
+        v_s = nudged_slider("Solvent velocity v", -9, -3, 0.1, -6, key="vsolv_i", unit="m/s"
                             help="Convective term v·C_avg added to each ion flux")
 
         st.subheader("Select ions (≤5 cations, ≤5 anions)")
